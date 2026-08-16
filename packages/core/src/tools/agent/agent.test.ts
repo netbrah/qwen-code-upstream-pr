@@ -7345,7 +7345,7 @@ describe('AgentTool', () => {
       }
     });
 
-    it('records background cursor activity, transcript, and terminal stats', async () => {
+    it('deduplicates background cursor tool starts while preserving transcript activity and stats', async () => {
       vi.useRealTimers();
       const priorKey = process.env['CURSOR_API_KEY'];
       process.env['CURSOR_API_KEY'] = 'test-key';
@@ -7355,9 +7355,13 @@ describe('AgentTool', () => {
         );
         const registry = config.getBackgroundTaskRegistry();
         const complete = vi.mocked(registry.complete);
+        const runningEntry = {
+          status: 'running',
+        } as unknown as Exclude<ReturnType<typeof registry.get>, undefined>;
+        vi.mocked(registry.get).mockReturnValue(runningEntry);
         mockCursorExecute.mockImplementation(
-          async (_signal, _update, _shellExecutionConfig, onActivity) => {
-            onActivity?.({
+          async (_signal, updateOutput, _shellExecutionConfig, onActivity) => {
+            const readStart: SubagentActivityEvent = {
               isSubagentActivityEvent: true,
               agentName: 'cursor-coder',
               type: 'TOOL_CALL_START',
@@ -7365,6 +7369,18 @@ describe('AgentTool', () => {
                 callId: 'read-1',
                 name: 'Read',
                 args: { file_path: 'README.md' },
+              },
+            };
+            onActivity?.(readStart);
+            onActivity?.(readStart);
+            onActivity?.({
+              isSubagentActivityEvent: true,
+              agentName: 'cursor-coder',
+              type: 'TOOL_CALL_START',
+              data: {
+                callId: 'write-1',
+                name: 'Write',
+                args: { file_path: 'notes.md' },
               },
             });
             onActivity?.({
@@ -7377,6 +7393,14 @@ describe('AgentTool', () => {
                 result: { output: '# Readme' },
                 isError: false,
               },
+            });
+            updateOutput?.({
+              type: 'task_execution',
+              subagentName: 'cursor-coder',
+              taskDescription: 'Do cursor work',
+              taskPrompt: 'Do cursor work',
+              status: 'running',
+              tokenCount: 9,
             });
             return {
               llmContent: 'cursor complete',
@@ -7409,16 +7433,197 @@ describe('AgentTool', () => {
           expect.stringMatching(/agent-cursor-coder-/),
           expect.objectContaining({ initialUserPrompt: 'Do cursor work' }),
         );
-        expect(mockCursorTranscriptAppend).toHaveBeenCalledTimes(2);
+        expect(mockCursorTranscriptAppend).toHaveBeenCalledTimes(4);
+        expect(vi.mocked(registry.appendActivity)).toHaveBeenCalledTimes(2);
         expect(vi.mocked(registry.appendActivity)).toHaveBeenCalledWith(
           expect.stringMatching(/^cursor-coder-/),
           expect.objectContaining({ name: 'Read' }),
         );
+        expect(runningEntry.stats).toEqual(
+          expect.objectContaining({
+            totalTokens: 0,
+            outputTokens: 9,
+            toolUses: 2,
+          }),
+        );
         expect(complete).toHaveBeenCalledWith(
           expect.stringMatching(/^cursor-coder-/),
           'cursor complete',
-          expect.objectContaining({ toolUses: 1, outputTokens: 9 }),
+          expect.objectContaining({
+            totalTokens: 0,
+            toolUses: 2,
+            outputTokens: 9,
+          }),
         );
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('fails a background cursor task from its failed terminal display', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const writeMetaSpy = vi
+        .spyOn(transcript, 'writeAgentMeta')
+        .mockImplementation(() => {});
+      const patchMetaSpy = vi
+        .spyOn(transcript, 'patchAgentMeta')
+        .mockReturnValue(undefined);
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        const registry = config.getBackgroundTaskRegistry();
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor failed',
+          returnDisplay: {
+            type: 'task_execution',
+            subagentName: 'cursor-coder',
+            taskDescription: 'Do cursor work',
+            taskPrompt: 'Do cursor work',
+            status: 'failed',
+            terminateReason: AgentTerminateMode.ERROR,
+          },
+        });
+        const invocation = agentTool.build({
+          description: 'Run cursor in the background',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: true,
+        });
+
+        await invocation.execute(new AbortController().signal);
+        await vi.waitFor(() => expect(registry.fail).toHaveBeenCalledTimes(1));
+
+        expect(registry.complete).not.toHaveBeenCalled();
+        expect(registry.finalizeCancelled).not.toHaveBeenCalled();
+        expect(registry.fail).toHaveBeenCalledWith(
+          expect.stringMatching(/^cursor-coder-/),
+          'cursor failed',
+          expect.any(Object),
+        );
+        expect(patchMetaSpy).toHaveBeenCalledWith(
+          expect.stringMatching(/agent-cursor-coder-/),
+          expect.objectContaining({
+            status: 'failed',
+            lastError: 'cursor failed',
+          }),
+        );
+      } finally {
+        writeMetaSpy.mockRestore();
+        patchMetaSpy.mockRestore();
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('cancels a background cursor task from its terminal display without an aborted signal', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const writeMetaSpy = vi
+        .spyOn(transcript, 'writeAgentMeta')
+        .mockImplementation(() => {});
+      const patchMetaSpy = vi
+        .spyOn(transcript, 'patchAgentMeta')
+        .mockReturnValue(undefined);
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        const registry = config.getBackgroundTaskRegistry();
+        mockCursorExecute.mockImplementation(async (signal) => {
+          expect(signal?.aborted).toBe(false);
+          return {
+            llmContent: 'cursor cancelled',
+            returnDisplay: {
+              type: 'task_execution',
+              subagentName: 'cursor-coder',
+              taskDescription: 'Do cursor work',
+              taskPrompt: 'Do cursor work',
+              status: 'cancelled',
+              terminateReason: AgentTerminateMode.CANCELLED,
+            },
+          };
+        });
+        const invocation = agentTool.build({
+          description: 'Run cursor in the background',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: true,
+        });
+
+        await invocation.execute(new AbortController().signal);
+        await vi.waitFor(() =>
+          expect(registry.finalizeCancelled).toHaveBeenCalledTimes(1),
+        );
+
+        expect(registry.complete).not.toHaveBeenCalled();
+        expect(registry.fail).not.toHaveBeenCalled();
+        expect(registry.finalizeCancelled).toHaveBeenCalledWith(
+          expect.stringMatching(/^cursor-coder-/),
+          'cursor cancelled',
+          expect.any(Object),
+        );
+        expect(patchMetaSpy).toHaveBeenCalledWith(
+          expect.stringMatching(/agent-cursor-coder-/),
+          expect.objectContaining({
+            status: 'cancelled',
+            lastError: undefined,
+          }),
+        );
+      } finally {
+        writeMetaSpy.mockRestore();
+        patchMetaSpy.mockRestore();
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('keeps initialized identity in a foreground cursor terminal display', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor terminal result',
+          returnDisplay: {
+            type: 'task_execution',
+            subagentName: 'cursor-coder',
+            taskDescription: 'Do cursor work',
+            taskPrompt: 'Do cursor work',
+            status: 'failed',
+            terminateReason: AgentTerminateMode.MAX_TURNS,
+            result: 'Cursor exhausted its turn budget.',
+          },
+        });
+        const invocation = agentTool.build({
+          description: 'Keep this host description',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: false,
+        });
+
+        const result = await invocation.execute(new AbortController().signal);
+
+        expect(result.returnDisplay).toMatchObject({
+          type: 'task_execution',
+          subagentName: 'cursor-coder',
+          subagentColor: 'cyan',
+          taskDescription: 'Keep this host description',
+          taskPrompt: 'Do cursor work',
+          status: 'failed',
+          terminateReason: AgentTerminateMode.MAX_TURNS,
+          result: 'Cursor exhausted its turn budget.',
+        });
       } finally {
         if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
         else process.env['CURSOR_API_KEY'] = priorKey;

@@ -2795,7 +2795,8 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           startedAt: number,
           outputTokens = 0,
         ) => ({
-          totalTokens: outputTokens,
+          // Cursor progress exposes output tokens only, not total usage.
+          totalTokens: 0,
           outputTokens,
           toolUses,
           durationMs: Date.now() - startedAt,
@@ -2832,6 +2833,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           const cursorStartedAt = Date.now();
           let cursorToolUses = 0;
           let cursorOutputTokens = 0;
+          const cursorToolCallIds = new Set<string>();
           const appendCursorTranscript = createCursorTranscriptWriter(
             jsonlPath,
             {
@@ -2857,6 +2859,9 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           const onCursorBackgroundActivity = (event: SubagentActivityEvent) => {
             appendCursorTranscript(event);
             if (event.type !== 'TOOL_CALL_START') return;
+            const callId = String(event.data['callId'] ?? '');
+            if (!callId || cursorToolCallIds.has(callId)) return;
+            cursorToolCallIds.add(callId);
             cursorToolUses += 1;
             refreshCursorBackgroundStats();
             registry.appendActivity(cursorAgentId, {
@@ -2926,17 +2931,21 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
               onCursorBackgroundActivity,
             )
             .then((result) => {
-              if (
+              const terminalDisplay =
                 typeof result.returnDisplay === 'object' &&
                 result.returnDisplay !== null &&
                 'type' in result.returnDisplay &&
-                result.returnDisplay.type === 'task_execution' &&
-                result.returnDisplay.tokenCount !== undefined
-              ) {
-                cursorOutputTokens = result.returnDisplay.tokenCount;
+                result.returnDisplay.type === 'task_execution'
+                  ? result.returnDisplay
+                  : undefined;
+              if (terminalDisplay?.tokenCount !== undefined) {
+                cursorOutputTokens = terminalDisplay.tokenCount;
               }
               const text = partToString(result.llmContent);
-              if (bgAbortController.signal.aborted) {
+              if (
+                bgAbortController.signal.aborted ||
+                terminalDisplay?.status === 'cancelled'
+              ) {
                 registry.finalizeCancelled(
                   cursorAgentId,
                   text,
@@ -2947,7 +2956,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                   ),
                 );
                 persistBackgroundCancellation(metaPath, 'cancelled');
-              } else if (result.error) {
+              } else if (result.error || terminalDisplay?.status === 'failed') {
                 registry.fail(
                   cursorAgentId,
                   text,
@@ -3012,7 +3021,15 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             returnDisplay: this.currentDisplay!,
           };
         }
-        return invocation.execute(cursorSignal, updateCursorDisplay);
+        const result = await invocation.execute(
+          cursorSignal,
+          updateCursorDisplay,
+        );
+        updateCursorDisplay(result.returnDisplay);
+        return {
+          ...result,
+          returnDisplay: this.currentDisplay!,
+        };
       }
 
       // Headless forks always use the background registry, even when
