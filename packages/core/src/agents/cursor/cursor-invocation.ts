@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import { appendFileSync } from 'node:fs';
 
 import { AgentTerminateMode } from '../../agents/runtime/agent-types.js';
+import type { ShellExecutionConfig } from '../../services/shellExecutionService.js';
 import {
   BaseToolInvocation,
   type AgentResultDisplay,
@@ -700,6 +701,8 @@ export class CursorAgentInvocation extends BaseToolInvocation<
   async execute(
     signal: AbortSignal,
     updateOutput?: (output: ToolResultDisplay) => void,
+    _shellExecutionConfig?: ShellExecutionConfig,
+    onActivity?: (event: SubagentActivityEvent) => void,
   ): Promise<ToolResult> {
     const agentName = this.agentName;
 
@@ -743,6 +746,7 @@ export class CursorAgentInvocation extends BaseToolInvocation<
       }
       for (const event of events) {
         recentActivity = applyActivity(recentActivity, event);
+        onActivity?.(event);
       }
       if (updateOutput) {
         updateOutput(

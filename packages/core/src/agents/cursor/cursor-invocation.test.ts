@@ -712,4 +712,121 @@ describe('CursorAgentInvocation.execute', () => {
       else process.env['CURSOR_API_KEY'] = prior;
     }
   });
+
+  it('forwards every mapped activity event to the activity callback in stream order', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const streamEvents: CursorSDKMessage[] = [
+        {
+          type: 'thinking',
+          agent_id: 'a',
+          run_id: 'run-callback',
+          text: 'Planning...',
+        },
+        {
+          type: 'assistant',
+          agent_id: 'a',
+          run_id: 'run-callback',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'call-shell',
+                name: 'shell',
+                input: { command: 'pwd' },
+              },
+              {
+                type: 'tool_use',
+                id: 'call-read',
+                name: 'read',
+                input: { path: 'README.md' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'tool_call',
+          agent_id: 'a',
+          run_id: 'run-callback',
+          call_id: 'call-shell',
+          name: 'shell',
+          status: 'completed',
+          result: { output: '/tmp/test' },
+        },
+        {
+          type: 'request',
+          agent_id: 'a',
+          run_id: 'run-callback',
+          request_id: 'request-1',
+        },
+        {
+          type: 'status',
+          agent_id: 'a',
+          run_id: 'run-callback',
+          status: 'FINISHED',
+        },
+      ];
+      const mockRun = {
+        id: 'run-callback',
+        async *stream() {
+          yield* streamEvents;
+        },
+        wait: async () => ({
+          id: 'run-callback',
+          status: 'finished' as const,
+          result: 'Task complete.',
+        }),
+        cancel: async () => {},
+        supports: (_cap: string) => true,
+      };
+      const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+      vi.mocked(sdk.Agent.create).mockResolvedValueOnce({
+        agentId: 'agent-callback',
+        send: vi.fn(async () => mockRun),
+        close: vi.fn(),
+      });
+      const invocation = new CursorAgentInvocation(
+        {
+          kind: 'cursor',
+          name: 'cursor-coder',
+          cursorModel: 'default',
+          trust: true,
+          isolatedCwd: false,
+        } as unknown as CursorAgentDefinition,
+        {
+          config: {
+            getProjectRoot: () => '/tmp/test',
+            getToolRegistry: () => ({ getAllTools: () => [] }),
+          },
+          toolRegistry: { getAllTools: () => [] },
+        } as unknown as ConstructorParameters<typeof CursorAgentInvocation>[1],
+        { query: 'do the thing' },
+      );
+      const received: SubagentActivityEvent[] = [];
+
+      await invocation.execute(
+        new AbortController().signal,
+        undefined,
+        undefined,
+        (event) => received.push(event),
+      );
+
+      expect(received).toEqual(
+        streamEvents.flatMap((event) => mapCursorEvent(event, 'cursor-coder')),
+      );
+      expect(received.map((event) => event.type)).toEqual([
+        'THOUGHT_CHUNK',
+        'TOOL_CALL_START',
+        'TOOL_CALL_START',
+        'TOOL_CALL_END',
+        'PERMISSION_GATE',
+        'PERMISSION_GATE',
+      ]);
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
 });
