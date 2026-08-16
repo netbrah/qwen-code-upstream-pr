@@ -53,6 +53,7 @@
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.1",
+    "@cursor/sdk": "^1.0.18",
     "@google/genai": "2.6.0",
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
