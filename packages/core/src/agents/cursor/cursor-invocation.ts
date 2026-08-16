@@ -183,7 +183,7 @@ function extractSdkInteractionResponseApproval(
     return undefined;
   }
   if ('approved' in inner) {
-    return true;
+    return inner['approved'] === true;
   }
   if ('denied' in inner) {
     return false;
@@ -351,6 +351,21 @@ export function mapRunResultToOutput(
       if (trimmedResult) {
         return {
           result: trimmedResult,
+          terminate_reason: AgentTerminateMode.ERROR,
+        };
+      }
+      const errorMessage = result.error?.message?.trim();
+      const errorCode = result.error?.code?.trim();
+      if (errorMessage) {
+        const codeSuffix = errorCode ? ` [${errorCode}]` : '';
+        return {
+          result: `${errorMessage}${codeSuffix}`,
+          terminate_reason: AgentTerminateMode.ERROR,
+        };
+      }
+      if (errorCode) {
+        return {
+          result: `Cursor agent run failed: error code ${errorCode}`,
           terminate_reason: AgentTerminateMode.ERROR,
         };
       }

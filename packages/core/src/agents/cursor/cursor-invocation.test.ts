@@ -228,6 +228,63 @@ describe('mapCursorEvent', () => {
     expect(events[0].data['approved']).toBe(false);
   });
 
+  it('Fix A: interaction_query(response, approved:false) → approved=false (not true)', () => {
+    const events = mapCursorEvent(
+      {
+        type: 'interaction_query',
+        subtype: 'response',
+        query_type: 'toolApprovalRequestQuery',
+        response: {
+          id: 7,
+          toolApprovalRequestResponse: { approved: false },
+        },
+      },
+      'cursor-coder',
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('PERMISSION_GATE');
+    expect(events[0].data['phase']).toBe('response');
+    expect(events[0].data['approved']).toBe(false);
+  });
+
+  it('Fix A CONTROL: interaction_query(response, approved:true) → approved=true', () => {
+    const events = mapCursorEvent(
+      {
+        type: 'interaction_query',
+        subtype: 'response',
+        query_type: 'toolApprovalRequestQuery',
+        response: {
+          id: 7,
+          toolApprovalRequestResponse: { approved: true },
+        },
+      },
+      'cursor-coder',
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('PERMISSION_GATE');
+    expect(events[0].data['phase']).toBe('response');
+    expect(events[0].data['approved']).toBe(true);
+  });
+
+  it('Fix A CONTROL: interaction_query(response, denied:true) → approved=false', () => {
+    const events = mapCursorEvent(
+      {
+        type: 'interaction_query',
+        subtype: 'response',
+        query_type: 'toolApprovalRequestQuery',
+        response: {
+          id: 7,
+          toolApprovalRequestResponse: { denied: true },
+        },
+      },
+      'cursor-coder',
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('PERMISSION_GATE');
+    expect(events[0].data['phase']).toBe('response');
+    expect(events[0].data['approved']).toBe(false);
+  });
+
   it('returns [] for usage messages', () => {
     expect(
       mapCursorEvent(
@@ -312,6 +369,50 @@ describe('mapRunResultToOutput', () => {
     expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
     expect(out.result).toContain('no result');
     expect(out.result).toContain('Last assistant text');
+  });
+
+  it('Fix B: error with result.error only → ERROR + error.message (not "no result" marker)', () => {
+    const out = mapRunResultToOutput(
+      {
+        id: 'r',
+        status: 'error',
+        error: { message: 'SDK crashed', code: 'E_RUNTIME' },
+      },
+      '',
+    );
+    expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
+    expect(out.result).toContain('SDK crashed');
+    expect(out.result).toContain('E_RUNTIME');
+    expect(out.result).not.toContain('no result');
+  });
+
+  it('Fix B: error with result.error.code but empty message → ERROR + code', () => {
+    const out = mapRunResultToOutput(
+      {
+        id: 'r',
+        status: 'error',
+        error: { message: '', code: 'E_TIMEOUT' },
+      },
+      '',
+    );
+    expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
+    expect(out.result).toContain('E_TIMEOUT');
+    expect(out.result).not.toContain('no result');
+  });
+
+  it('Fix B CONTROL: error with both result and result.error → result wins', () => {
+    const out = mapRunResultToOutput(
+      {
+        id: 'r',
+        status: 'error',
+        result: 'explicit result string',
+        error: { message: 'should be ignored', code: 'E_IGNORED' },
+      },
+      '',
+    );
+    expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
+    expect(out.result).toBe('explicit result string');
+    expect(out.result).not.toContain('should be ignored');
   });
 });
 
