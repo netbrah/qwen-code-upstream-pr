@@ -97,7 +97,7 @@ describe('TaskListTool', () => {
     expect(result.llmContent).not.toContain('Pending');
   });
 
-  it('treats blank optional filters as omitted', async () => {
+  it('lists tasks when optional filters are omitted', async () => {
     const pending = await createTask(TEAM, {
       subject: 'Pending task',
       description: 'desc',
@@ -112,20 +112,41 @@ describe('TaskListTool', () => {
     });
 
     const pendingResult = await tool
-      .build({ status: 'pending', owner: '', blockedBy: '' })
+      .build({ status: 'pending' })
       .execute(new AbortController().signal);
-    const runningResult = await tool
-      .build({ status: 'in_progress', owner: '', blockedBy: '' })
+    const ownerResult = await tool
+      .build({ owner: 'worker' })
       .execute(new AbortController().signal);
 
     expect(pendingResult.llmContent).toContain(pending.subject);
-    expect(runningResult.llmContent).toContain(running.subject);
+    expect(ownerResult.llmContent).toContain(running.subject);
+    expect(ownerResult.llmContent).not.toContain(pending.subject);
+  });
 
-    const ownerControl = await tool
-      .build({ owner: 'worker' })
+  it('treats a blank owner filter as omitted', async () => {
+    const pending = await createTask(TEAM, {
+      subject: 'Pending task',
+      description: 'desc',
+    });
+
+    const result = await tool
+      .build({ status: 'pending', owner: '' })
       .execute(new AbortController().signal);
-    expect(ownerControl.llmContent).toContain(running.subject);
-    expect(ownerControl.llmContent).not.toContain(pending.subject);
+
+    expect(result.llmContent).toContain(pending.subject);
+  });
+
+  it('treats a blank blockedBy filter as omitted', async () => {
+    const pending = await createTask(TEAM, {
+      subject: 'Pending task',
+      description: 'desc',
+    });
+
+    const result = await tool
+      .build({ status: 'pending', blockedBy: '' })
+      .execute(new AbortController().signal);
+
+    expect(result.llmContent).toContain(pending.subject);
   });
 
   it('returns TaskListResultDisplay', async () => {
