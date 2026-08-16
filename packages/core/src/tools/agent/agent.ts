@@ -3021,15 +3021,148 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             returnDisplay: this.currentDisplay!,
           };
         }
-        const result = await invocation.execute(
-          cursorSignal,
-          updateCursorDisplay,
+        const registry = this.config.getBackgroundTaskRegistry();
+        const projectDir = this.config.storage.getProjectDir();
+        const sessionId = this.config.getSessionId();
+        const cursorAgentId = `${subagentConfig.name}-${this.callId ?? randomUUID().slice(0, 8)}`;
+        const jsonlPath = getAgentJsonlPath(
+          projectDir,
+          sessionId,
+          cursorAgentId,
         );
-        updateCursorDisplay(result.returnDisplay);
-        return {
-          ...result,
-          returnDisplay: this.currentDisplay!,
+        const metaPath = getAgentMetaPath(projectDir, sessionId, cursorAgentId);
+        const fgAbortController = new AbortController();
+        const onParentAbort = () => fgAbortController.abort();
+        if (cursorSignal.aborted) {
+          fgAbortController.abort();
+        } else {
+          cursorSignal.addEventListener('abort', onParentAbort, {
+            once: true,
+          });
+        }
+        const cursorStartedAt = Date.now();
+        let cursorToolUses = 0;
+        let cursorOutputTokens = 0;
+        const cursorToolCallIds = new Set<string>();
+        const appendCursorTranscript = createCursorTranscriptWriter(jsonlPath, {
+          agentId: cursorAgentId,
+          agentName: subagentConfig.name,
+          agentColor: subagentConfig.color,
+          sessionId,
+          cwd: this.config.getProjectRoot(),
+          version: this.config.getCliVersion() || 'unknown',
+          gitBranch: getCachedGitBranch(this.config.getProjectRoot()),
+          initialUserPrompt: this.params.prompt,
+        });
+        const refreshCursorForegroundStats = () => {
+          const entry = registry.get(cursorAgentId);
+          if (!entry || entry.status !== 'running') return;
+          entry.stats = cursorStats(
+            cursorToolUses,
+            cursorStartedAt,
+            cursorOutputTokens,
+          );
         };
+        const onCursorForegroundActivity = (event: SubagentActivityEvent) => {
+          appendCursorTranscript(event);
+          if (event.type !== 'TOOL_CALL_START') return;
+          const callId = String(event.data['callId'] ?? '');
+          if (!callId || cursorToolCallIds.has(callId)) return;
+          cursorToolCallIds.add(callId);
+          cursorToolUses += 1;
+          refreshCursorForegroundStats();
+          registry.appendActivity(cursorAgentId, {
+            name: String(event.data['name'] ?? 'tool'),
+            description: String(event.data['name'] ?? 'tool'),
+            at: Date.now(),
+          });
+        };
+        const updateCursorForegroundDisplay = (display: ToolResultDisplay) => {
+          if (
+            typeof display === 'object' &&
+            display !== null &&
+            'type' in display &&
+            display.type === 'task_execution' &&
+            display.tokenCount !== undefined
+          ) {
+            cursorOutputTokens = display.tokenCount;
+            refreshCursorForegroundStats();
+          }
+          updateCursorDisplay(display);
+        };
+
+        let cursorResult: ToolResult | undefined;
+        let cursorThrown = false;
+        try {
+          registry.register({
+            agentId: cursorAgentId,
+            description: this.params.description,
+            subagentType: subagentConfig.name,
+            isBackgrounded: false,
+            status: 'running',
+            startTime: cursorStartedAt,
+            abortController: fgAbortController,
+            toolUseId: this.callId,
+            prompt: this.params.prompt,
+            outputFile: jsonlPath,
+            metaPath,
+            parentAgentId: getCurrentAgentId(),
+            depth: childLaunchDepth(),
+          });
+          writeAgentMeta(metaPath, {
+            agentId: cursorAgentId,
+            agentType: subagentConfig.name,
+            description: this.params.description,
+            parentSessionId: sessionId,
+            toolUseId: this.callId,
+            parentAgentId: getCurrentAgentId(),
+            createdAt: new Date().toISOString(),
+            status: 'running',
+            isBackgrounded: false,
+            lastUpdatedAt: new Date().toISOString(),
+            subagentName: subagentConfig.name,
+            agentColor: subagentConfig.color,
+            resumeCount: 0,
+            depth: childLaunchDepth(),
+          });
+          cursorResult = await invocation.execute(
+            fgAbortController.signal,
+            updateCursorForegroundDisplay,
+            undefined,
+            onCursorForegroundActivity,
+          );
+          updateCursorForegroundDisplay(cursorResult.returnDisplay);
+          return {
+            ...cursorResult,
+            returnDisplay: this.currentDisplay!,
+          };
+        } catch (error) {
+          cursorThrown = true;
+          throw error;
+        } finally {
+          cursorSignal.removeEventListener('abort', onParentAbort);
+          const cursorTerminalDisplay =
+            typeof cursorResult?.returnDisplay === 'object' &&
+            cursorResult.returnDisplay !== null &&
+            'type' in cursorResult.returnDisplay &&
+            cursorResult.returnDisplay.type === 'task_execution'
+              ? cursorResult.returnDisplay
+              : undefined;
+          const cursorTerminalStatus =
+            fgAbortController.signal.aborted ||
+            cursorTerminalDisplay?.status === 'cancelled'
+              ? 'cancelled'
+              : cursorThrown ||
+                  cursorResult?.error ||
+                  cursorTerminalDisplay?.status === 'failed'
+                ? 'failed'
+                : 'completed';
+          patchAgentMeta(metaPath, {
+            status: cursorTerminalStatus,
+            lastUpdatedAt: new Date().toISOString(),
+          });
+          registry.unregisterForeground(cursorAgentId);
+        }
       }
 
       // Headless forks always use the background registry, even when
