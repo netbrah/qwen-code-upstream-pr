@@ -1822,6 +1822,19 @@ Target content`,
   });
 
   describe('listSubagents', () => {
+    let priorCursorApiKey: string | undefined;
+    beforeEach(() => {
+      priorCursorApiKey = process.env['CURSOR_API_KEY'];
+      delete process.env['CURSOR_API_KEY'];
+    });
+    afterEach(() => {
+      if (priorCursorApiKey !== undefined) {
+        process.env['CURSOR_API_KEY'] = priorCursorApiKey;
+      } else {
+        delete process.env['CURSOR_API_KEY'];
+      }
+    });
+
     beforeEach(() => {
       // Mock directory listing
       vi.mocked(fs.readdir)
