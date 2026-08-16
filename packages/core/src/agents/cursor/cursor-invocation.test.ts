@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   mapCursorEvent,
   extractAssistantText,
@@ -6,13 +6,67 @@ import {
   applyActivity,
   resolveCursorApiKey,
   toCursorModelParams,
+  CursorAgentInvocation,
 } from './cursor-invocation.js';
 import { AgentTerminateMode } from '../../agents/runtime/agent-types.js';
 import type {
+  CursorAgentDefinition,
   CursorSDKMessage,
   SubagentActivityEvent,
   SubagentActivityItem,
 } from './types.js';
+
+// Mock the @cursor/sdk lazy import. The invocation does `await import('@cursor/sdk')`.
+vi.mock('@cursor/sdk', () => {
+  const mockRun = {
+    id: 'run-1',
+    async *stream() {
+      yield {
+        type: 'thinking',
+        agent_id: 'a',
+        run_id: 'run-1',
+        text: 'Planning...',
+      };
+      yield {
+        type: 'assistant',
+        agent_id: 'a',
+        run_id: 'run-1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+      };
+      yield {
+        type: 'status',
+        agent_id: 'a',
+        run_id: 'run-1',
+        status: 'FINISHED',
+      };
+    },
+    wait: async () => ({
+      id: 'run-1',
+      status: 'finished',
+      result: 'Task complete.',
+    }),
+    cancel: async () => {},
+    supports: (cap: string) => cap === 'cancel',
+  };
+  return {
+    Agent: {
+      create: vi.fn(async () => ({
+        agentId: 'agent-1',
+        send: vi.fn(async () => mockRun),
+        close: vi.fn(),
+      })),
+      resume: vi.fn(async () => ({
+        agentId: 'agent-1',
+        send: vi.fn(async () => mockRun),
+        close: vi.fn(),
+      })),
+    },
+    CursorSdkError: class extends Error {},
+  };
+});
 
 describe('mapCursorEvent', () => {
   it('maps a thinking message to a THOUGHT_CHUNK event', () => {
@@ -370,5 +424,105 @@ describe('applyActivity', () => {
       data: { callId: 'c1', isError: false },
     });
     expect(activity[0].status).toBe('completed');
+  });
+});
+
+describe('CursorAgentInvocation.execute', () => {
+  it('drives the SDK loop and returns a ToolResult', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const definition = {
+        kind: 'cursor' as const,
+        name: 'cursor-coder',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+        runConfig: { maxTimeMinutes: 1, maxTurns: 10 },
+      };
+      const context = {
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
+      };
+      const invocation = new CursorAgentInvocation(
+        definition as unknown as CursorAgentDefinition,
+        context as unknown as ConstructorParameters<
+          typeof CursorAgentInvocation
+        >[1],
+        { query: 'do the thing' },
+      );
+      const result = await invocation.execute(new AbortController().signal);
+      expect(result.llmContent).toBeDefined();
+      expect(result.returnDisplay).toBeDefined();
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
+
+  it('refuses to run when trust is false', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const definition = {
+        kind: 'cursor' as const,
+        name: 'cursor-coder',
+        cursorModel: 'default',
+        trust: false,
+        isolatedCwd: false,
+      };
+      const context = {
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
+      };
+      const invocation = new CursorAgentInvocation(
+        definition as unknown as CursorAgentDefinition,
+        context as unknown as ConstructorParameters<
+          typeof CursorAgentInvocation
+        >[1],
+        { query: 'do the thing' },
+      );
+      const result = await invocation.execute(new AbortController().signal);
+      expect(result.error).toBeDefined();
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
+
+  it('throws when CURSOR_API_KEY is unset', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    delete process.env['CURSOR_API_KEY'];
+    try {
+      const definition = {
+        kind: 'cursor' as const,
+        name: 'cursor-coder',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+      };
+      const context = {
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
+      };
+      const invocation = new CursorAgentInvocation(
+        definition as unknown as CursorAgentDefinition,
+        context as unknown as ConstructorParameters<
+          typeof CursorAgentInvocation
+        >[1],
+        { query: 'do the thing' },
+      );
+      const result = await invocation.execute(new AbortController().signal);
+      expect(result.error).toBeDefined();
+      expect(JSON.stringify(result.llmContent)).toContain('CURSOR_API_KEY');
+    } finally {
+      if (prior !== undefined) process.env['CURSOR_API_KEY'] = prior;
+    }
   });
 });
