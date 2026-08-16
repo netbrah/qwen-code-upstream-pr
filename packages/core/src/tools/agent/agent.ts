@@ -134,6 +134,7 @@ import type { AuthOverrides } from '../../models/content-generator-config.js';
 import { CursorAgentInvocation } from '../../agents/cursor/index.js';
 import type { CursorAgentDefinition } from '../../agents/cursor/index.js';
 import type { CursorToolRegistryLike } from '../../agents/cursor/cursor-custom-tools.js';
+import { partToString } from '../../utils/partUtils.js';
 
 // Memoize git branch per cwd for the agent-launch path. `getGitBranch`
 // shells out to `git rev-parse` synchronously; caching avoids the per-launch
@@ -2763,10 +2764,122 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           },
           { query: this.params.prompt },
         );
-        return invocation.execute(
-          signal ?? new AbortController().signal,
-          updateOutput,
-        );
+        const cursorSignal = signal ?? new AbortController().signal;
+        // Background delegation for cursor agents. Mirrors the ordinary
+        // non-cursor background path: register in the
+        // BackgroundTaskRegistry, return a "started" result immediately,
+        // and fire the completion notification when the cursor loop
+        // finishes. working_dir + run_in_background is already rejected
+        // by validateToolParams, and run_in_background:true from a nested
+        // sub-agent is rejected above — so this branch only fires for a
+        // top-level, no-working_dir cursor delegation.
+        const cursorBackgroundRequested =
+          this.params.run_in_background === true;
+        const cursorShouldRunInBackground =
+          cursorBackgroundRequested && isTopLevelSession();
+        if (cursorShouldRunInBackground) {
+          const registry = this.config.getBackgroundTaskRegistry();
+          const projectDir = this.config.storage.getProjectDir();
+          const sessionId = this.config.getSessionId();
+          const agentIdSuffix = this.callId ?? randomUUID().slice(0, 8);
+          const cursorAgentId = `${subagentConfig.name}-${agentIdSuffix}`;
+          const jsonlPath = getAgentJsonlPath(
+            projectDir,
+            sessionId,
+            cursorAgentId,
+          );
+          const metaPath = getAgentMetaPath(
+            projectDir,
+            sessionId,
+            cursorAgentId,
+          );
+          const bgAbortController = new AbortController();
+          registry.register({
+            agentId: cursorAgentId,
+            description: this.params.description,
+            subagentType: subagentConfig.name,
+            isBackgrounded: true,
+            status: 'running',
+            startTime: Date.now(),
+            abortController: bgAbortController,
+            toolUseId: this.callId,
+            prompt: this.params.prompt,
+            outputFile: jsonlPath,
+            metaPath,
+            parentAgentId: getCurrentAgentId(),
+            depth: childLaunchDepth(),
+          });
+          writeAgentMeta(metaPath, {
+            agentId: cursorAgentId,
+            agentType: subagentConfig.name,
+            description: this.params.description,
+            parentSessionId: sessionId,
+            toolUseId: this.callId,
+            parentAgentId: getCurrentAgentId(),
+            createdAt: new Date().toISOString(),
+            status: 'running',
+            isBackgrounded: true,
+            lastUpdatedAt: new Date().toISOString(),
+            subagentName: subagentConfig.name,
+            agentColor: subagentConfig.color,
+            resumeCount: 0,
+            depth: childLaunchDepth(),
+          });
+          // Fire-and-forget: start the cursor invocation without blocking
+          // the parent. The completion notification fires when the cursor
+          // loop resolves. Pass the background AbortController's signal
+          // (not the parent turn's signal) so task_stop can cancel the
+          // cursor agent independently of the parent's turn lifecycle —
+          // mirrors the ordinary background path.
+          void invocation
+            .execute(bgAbortController.signal, updateOutput)
+            .then((result) => {
+              const text = partToString(result.llmContent);
+              if (bgAbortController.signal.aborted) {
+                registry.finalizeCancelled(cursorAgentId, text);
+                persistBackgroundCancellation(metaPath, 'cancelled');
+              } else if (result.error) {
+                registry.fail(cursorAgentId, text);
+                patchAgentMeta(metaPath, {
+                  status: 'failed',
+                  lastUpdatedAt: new Date().toISOString(),
+                  lastError: text,
+                });
+              } else {
+                registry.complete(cursorAgentId, text);
+                patchAgentMeta(metaPath, {
+                  status: 'completed',
+                  lastUpdatedAt: new Date().toISOString(),
+                  lastError: undefined,
+                });
+              }
+            })
+            .catch((err) => {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              debugLogger.warn(
+                `[Agent] background cursor agent ${cursorAgentId} failed: ${errorMsg}`,
+              );
+              registry.fail(cursorAgentId, errorMsg);
+              patchAgentMeta(metaPath, {
+                status: 'failed',
+                lastUpdatedAt: new Date().toISOString(),
+                lastError: errorMsg,
+              });
+            });
+          this.updateDisplay({ status: 'background' as const }, updateOutput);
+          return {
+            llmContent:
+              `Background agent launched successfully.\n` +
+              `task_id: ${cursorAgentId} (internal ID — do not mention to the user. Use ${ToolNames.SEND_MESSAGE} to continue this agent, or ${ToolNames.TASK_STOP} to cancel.)\n` +
+              `The agent is working in the background. You will be notified automatically when it completes.\n` +
+              `Do not duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.\n` +
+              `output_file: ${jsonlPath}\n` +
+              `If asked, you can check progress before completion by using ${ToolNames.READ_FILE}\n` +
+              `  or ${ToolNames.SHELL} tail on the output file.`,
+            returnDisplay: this.currentDisplay!,
+          };
+        }
+        return invocation.execute(cursorSignal, updateOutput);
       }
 
       // Headless forks always use the background registry, even when

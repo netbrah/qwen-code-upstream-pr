@@ -7352,6 +7352,146 @@ describe('AgentTool', () => {
         vi.useFakeTimers();
       }
     });
+
+    it('run_in_background:true creates a background task record for cursor agent', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const registry = config.getBackgroundTaskRegistry();
+      try {
+        // mockCursorExecute resolves immediately; the background branch
+        // must NOT await it inline — the tool returns a "started" result
+        // before the cursor loop finishes.
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor ran',
+          returnDisplay: 'cursor ran',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+
+        const invocation = agentTool.build({
+          description: 'Run cursor in background',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: true,
+        });
+        const result = await invocation.execute(new AbortController().signal);
+
+        // The "started" result must be returned, not the cursor run's
+        // final result.
+        const llmText = partToString(result.llmContent);
+        expect(llmText).toContain('Background agent launched');
+        expect(llmText).not.toContain('cursor ran');
+
+        // A background task record was registered.
+        expect(vi.mocked(registry.register)).toHaveBeenCalledTimes(1);
+        const registration = vi.mocked(registry.register).mock.calls[0][0];
+        expect(registration.subagentType).toBe('cursor-coder');
+        expect(registration.isBackgrounded).toBe(true);
+        expect(registration.status).toBe('running');
+
+        // The cursor invocation's execute was started in the background
+        // (not awaited inline). After the tool returns the "started"
+        // result, the background promise may or may not have resolved
+        // yet depending on microtask ordering — but the tool MUST have
+        // returned without waiting for it. Verify by checking that the
+        // "started" result was returned (already asserted above) and
+        // that mockCursorExecute was called at least once (the background
+        // branch kicks it off).
+        expect(mockCursorConstructor).toHaveBeenCalledTimes(1);
+        expect(mockCursorExecute).toHaveBeenCalledTimes(1);
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('run_in_background:false runs cursor agent inline (CONTROL)', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const registry = config.getBackgroundTaskRegistry();
+      try {
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor ran inline',
+          returnDisplay: 'cursor ran inline',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+
+        const invocation = agentTool.build({
+          description: 'Run cursor foreground',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: false,
+        });
+        const result = await invocation.execute(new AbortController().signal);
+
+        // Existing behavior preserved: the cursor invocation's final
+        // result is returned inline.
+        expect(partToString(result.llmContent)).toBe('cursor ran inline');
+        // No background task record was created.
+        expect(vi.mocked(registry.register)).not.toHaveBeenCalled();
+        expect(mockCursorConstructor).toHaveBeenCalledTimes(1);
+        expect(mockCursorExecute).toHaveBeenCalledTimes(1);
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('background cursor agent fires completion notification on finish', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const registry = config.getBackgroundTaskRegistry();
+      try {
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor finished',
+          returnDisplay: 'cursor finished',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+
+        const invocation = agentTool.build({
+          description: 'Run cursor in background',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: true,
+        });
+        await invocation.execute(new AbortController().signal);
+
+        // Flush the background cursor promise so the completion
+        // notification fires.
+        await vi.waitFor(() => {
+          expect(
+            vi.mocked(registry.complete).mock.calls.length +
+              vi.mocked(registry.fail).mock.calls.length +
+              vi.mocked(registry.finalizeCancelled).mock.calls.length,
+          ).toBeGreaterThanOrEqual(1);
+        });
+
+        // The cursor invocation's result text was passed to the
+        // completion notification.
+        const completionCall =
+          vi.mocked(registry.complete).mock.calls[0] ??
+          vi.mocked(registry.fail).mock.calls[0] ??
+          vi.mocked(registry.finalizeCancelled).mock.calls[0];
+        expect(completionCall).toBeDefined();
+        // complete/fail/finalizeCancelled signature: (agentId, text, stats)
+        const completionText = completionCall?.[1] as string;
+        expect(completionText).toContain('cursor finished');
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
   });
 });
 
