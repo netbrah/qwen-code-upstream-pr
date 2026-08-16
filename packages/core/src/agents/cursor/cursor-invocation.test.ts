@@ -829,4 +829,145 @@ describe('CursorAgentInvocation.execute', () => {
       else process.env['CURSOR_API_KEY'] = prior;
     }
   });
+
+  it('forwards a terminal error result from wait() to the activity callback', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const mockRun = {
+        id: 'run-terminal-error',
+        async *stream(): AsyncGenerator<CursorSDKMessage, void> {},
+        wait: async () => ({
+          status: 'error' as const,
+          result: 'terminal Cursor failure',
+        }),
+        cancel: async () => {},
+        supports: (_cap: string) => true,
+      };
+      const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+      vi.mocked(sdk.Agent.create).mockResolvedValueOnce({
+        agentId: 'agent-terminal-error',
+        send: vi.fn(async () => mockRun),
+        close: vi.fn(),
+      });
+      const invocation = new CursorAgentInvocation(
+        {
+          kind: 'cursor',
+          name: 'cursor-coder',
+          cursorModel: 'default',
+          trust: true,
+          isolatedCwd: false,
+        } as unknown as CursorAgentDefinition,
+        {
+          config: {
+            getProjectRoot: () => '/tmp/test',
+            getToolRegistry: () => ({ getAllTools: () => [] }),
+          },
+          toolRegistry: { getAllTools: () => [] },
+        } as unknown as ConstructorParameters<typeof CursorAgentInvocation>[1],
+        { query: 'do the thing' },
+      );
+      const received: SubagentActivityEvent[] = [];
+
+      await invocation.execute(
+        new AbortController().signal,
+        undefined,
+        undefined,
+        (event) => received.push(event),
+      );
+
+      expect(received).toEqual([
+        {
+          isSubagentActivityEvent: true,
+          agentName: 'cursor-coder',
+          type: 'ERROR',
+          data: { error: 'terminal Cursor failure' },
+        },
+      ]);
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
+
+  it('cancels a run when the signal aborts while send is pending', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const cancel = vi.fn(async () => {});
+      const mockRun = {
+        id: 'run-aborted-send',
+        async *stream(): AsyncGenerator<CursorSDKMessage, void> {
+          yield {
+            type: 'thinking',
+            agent_id: 'a',
+            run_id: 'run-aborted-send',
+            text: 'not consumed after abort',
+          };
+        },
+        wait: vi.fn(async () => ({
+          id: 'run-aborted-send',
+          status: 'cancelled' as const,
+          result: 'Cancelled after startup.',
+        })),
+        cancel,
+        supports: (cap: string) => cap === 'cancel',
+      };
+      let resolveSend: (run: typeof mockRun) => void = () => {};
+      let signalSendStarted: () => void = () => {};
+      const sendStarted = new Promise<void>((resolve) => {
+        signalSendStarted = resolve;
+      });
+      const send = vi.fn(
+        () =>
+          new Promise<typeof mockRun>((resolve) => {
+            signalSendStarted();
+            resolveSend = resolve;
+          }),
+      );
+      const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+      vi.mocked(sdk.Agent.create).mockResolvedValueOnce({
+        agentId: 'agent-aborted-send',
+        send,
+        close: vi.fn(),
+      });
+      const invocation = new CursorAgentInvocation(
+        {
+          kind: 'cursor',
+          name: 'cursor-coder',
+          cursorModel: 'default',
+          trust: true,
+          isolatedCwd: false,
+        } as unknown as CursorAgentDefinition,
+        {
+          config: {
+            getProjectRoot: () => '/tmp/test',
+            getToolRegistry: () => ({ getAllTools: () => [] }),
+          },
+          toolRegistry: { getAllTools: () => [] },
+        } as unknown as ConstructorParameters<typeof CursorAgentInvocation>[1],
+        { query: 'do the thing' },
+      );
+      const abortController = new AbortController();
+      const execution = invocation.execute(abortController.signal);
+
+      await sendStarted;
+      abortController.abort();
+      resolveSend(mockRun);
+
+      const result = await execution;
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(mockRun.wait).toHaveBeenCalledTimes(1);
+      expect(result.error).toBeUndefined();
+      expect(result.returnDisplay).toMatchObject({
+        type: 'task_execution',
+        status: 'cancelled',
+        terminateReason: AgentTerminateMode.CANCELLED,
+      });
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
 });

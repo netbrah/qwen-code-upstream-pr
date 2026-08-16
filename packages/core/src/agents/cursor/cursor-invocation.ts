@@ -860,6 +860,9 @@ export class CursorAgentInvocation extends BaseToolInvocation<
             void cancelRunSafely(run);
           };
           signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) {
+            await cancelRunSafely(run);
+          }
           let logicalTurns = 0;
           const countedCallIds = new Set<string>();
           const tryCountTurn = (callId: string | undefined): boolean => {
@@ -957,12 +960,14 @@ export class CursorAgentInvocation extends BaseToolInvocation<
 
       if (result.status === 'error') {
         output.result = sanitizeErrorMessage(output.result);
-        recentActivity = applyActivity(recentActivity, {
-          isSubagentActivityEvent: true,
-          agentName,
-          type: 'ERROR',
-          data: { error: output.result },
-        });
+        emit([
+          {
+            isSubagentActivityEvent: true,
+            agentName,
+            type: 'ERROR',
+            data: { error: output.result },
+          },
+        ]);
       } else {
         for (const item of recentActivity) {
           if (item.status === 'running') {

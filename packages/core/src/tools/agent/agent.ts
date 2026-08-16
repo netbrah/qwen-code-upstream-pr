@@ -2816,6 +2816,38 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           cursorBackgroundRequested && isTopLevelSession();
         if (cursorShouldRunInBackground) {
           const registry = this.config.getBackgroundTaskRegistry();
+          // Cursor passes this value directly as the SDK's `model.id`, so it
+          // is the factual execution-model identifier available at launch.
+          const cursorModel = definition.cursorModel;
+          backgroundSlotReservation =
+            registry.tryReserveBackgroundSlot(cursorModel);
+          if (!backgroundSlotReservation) {
+            const queuedCount = registry.getQueuedCount();
+            const queueText =
+              queuedCount === 0
+                ? 'no agents ahead'
+                : queuedCount === 1
+                  ? '1 already queued'
+                  : `${queuedCount} already queued`;
+            this.updateDisplay(
+              {
+                status: 'running',
+                terminateReason: `Waiting for a sub-agent slot (${queueText}).`,
+              },
+              updateOutput,
+            );
+            backgroundSlotReservation = await registry.waitForBackgroundSlot(
+              signal,
+              cursorModel,
+            );
+          }
+          this.updateDisplay(
+            {
+              status: 'running',
+              terminateReason: undefined,
+            },
+            updateOutput,
+          );
           const projectDir = this.config.storage.getProjectDir();
           const sessionId = this.config.getSessionId();
           const agentIdSuffix = this.callId ?? randomUUID().slice(0, 8);
@@ -2886,21 +2918,30 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             updateCursorDisplay(display);
           };
           const bgAbortController = new AbortController();
-          registry.register({
-            agentId: cursorAgentId,
-            description: this.params.description,
-            subagentType: subagentConfig.name,
-            isBackgrounded: true,
-            status: 'running',
-            startTime: Date.now(),
-            abortController: bgAbortController,
-            toolUseId: this.callId,
-            prompt: this.params.prompt,
-            outputFile: jsonlPath,
-            metaPath,
-            parentAgentId: getCurrentAgentId(),
-            depth: childLaunchDepth(),
-          });
+          const registerOptions = backgroundSlotReservation
+            ? { slotReservation: backgroundSlotReservation }
+            : {};
+          registry.register(
+            {
+              agentId: cursorAgentId,
+              description: this.params.description,
+              subagentType: subagentConfig.name,
+              model: cursorModel,
+              isBackgrounded: true,
+              status: 'running',
+              startTime: Date.now(),
+              abortController: bgAbortController,
+              toolUseId: this.callId,
+              prompt: this.params.prompt,
+              outputFile: jsonlPath,
+              metaPath,
+              parentAgentId: getCurrentAgentId(),
+              depth: childLaunchDepth(),
+            },
+            registerOptions,
+          );
+          backgroundSlotReservationConsumed = true;
+          backgroundSlotReservation = undefined;
           writeAgentMeta(metaPath, {
             agentId: cursorAgentId,
             agentType: subagentConfig.name,
@@ -2946,6 +2987,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                 bgAbortController.signal.aborted ||
                 terminalDisplay?.status === 'cancelled'
               ) {
+                persistBackgroundCancellation(metaPath, 'cancelled');
                 registry.finalizeCancelled(
                   cursorAgentId,
                   text,
@@ -2955,8 +2997,12 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                     cursorOutputTokens,
                   ),
                 );
-                persistBackgroundCancellation(metaPath, 'cancelled');
               } else if (result.error || terminalDisplay?.status === 'failed') {
+                patchAgentMeta(metaPath, {
+                  status: 'failed',
+                  lastUpdatedAt: new Date().toISOString(),
+                  lastError: text,
+                });
                 registry.fail(
                   cursorAgentId,
                   text,
@@ -2966,12 +3012,12 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                     cursorOutputTokens,
                   ),
                 );
-                patchAgentMeta(metaPath, {
-                  status: 'failed',
-                  lastUpdatedAt: new Date().toISOString(),
-                  lastError: text,
-                });
               } else {
+                patchAgentMeta(metaPath, {
+                  status: 'completed',
+                  lastUpdatedAt: new Date().toISOString(),
+                  lastError: undefined,
+                });
                 registry.complete(
                   cursorAgentId,
                   text,
@@ -2981,11 +3027,6 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                     cursorOutputTokens,
                   ),
                 );
-                patchAgentMeta(metaPath, {
-                  status: 'completed',
-                  lastUpdatedAt: new Date().toISOString(),
-                  lastError: undefined,
-                });
               }
             })
             .catch((err) => {
@@ -2993,6 +3034,11 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
               debugLogger.warn(
                 `[Agent] background cursor agent ${cursorAgentId} failed: ${errorMsg}`,
               );
+              patchAgentMeta(metaPath, {
+                status: 'failed',
+                lastUpdatedAt: new Date().toISOString(),
+                lastError: errorMsg,
+              });
               registry.fail(
                 cursorAgentId,
                 errorMsg,
@@ -3002,11 +3048,6 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
                   cursorOutputTokens,
                 ),
               );
-              patchAgentMeta(metaPath, {
-                status: 'failed',
-                lastUpdatedAt: new Date().toISOString(),
-                lastError: errorMsg,
-              });
             });
           this.updateDisplay({ status: 'background' as const }, updateOutput);
           return {
@@ -3033,6 +3074,9 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
         const metaPath = getAgentMetaPath(projectDir, sessionId, cursorAgentId);
         const fgAbortController = new AbortController();
         const onParentAbort = () => fgAbortController.abort();
+        let cursorResult: ToolResult | undefined;
+        let cursorThrown = false;
+        let cursorRegistered = false;
         if (cursorSignal.aborted) {
           fgAbortController.abort();
         } else {
@@ -3040,60 +3084,63 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             once: true,
           });
         }
-        const cursorStartedAt = Date.now();
-        let cursorToolUses = 0;
-        let cursorOutputTokens = 0;
-        const cursorToolCallIds = new Set<string>();
-        const appendCursorTranscript = createCursorTranscriptWriter(jsonlPath, {
-          agentId: cursorAgentId,
-          agentName: subagentConfig.name,
-          agentColor: subagentConfig.color,
-          sessionId,
-          cwd: this.config.getProjectRoot(),
-          version: this.config.getCliVersion() || 'unknown',
-          gitBranch: getCachedGitBranch(this.config.getProjectRoot()),
-          initialUserPrompt: this.params.prompt,
-        });
-        const refreshCursorForegroundStats = () => {
-          const entry = registry.get(cursorAgentId);
-          if (!entry || entry.status !== 'running') return;
-          entry.stats = cursorStats(
-            cursorToolUses,
-            cursorStartedAt,
-            cursorOutputTokens,
-          );
-        };
-        const onCursorForegroundActivity = (event: SubagentActivityEvent) => {
-          appendCursorTranscript(event);
-          if (event.type !== 'TOOL_CALL_START') return;
-          const callId = String(event.data['callId'] ?? '');
-          if (!callId || cursorToolCallIds.has(callId)) return;
-          cursorToolCallIds.add(callId);
-          cursorToolUses += 1;
-          refreshCursorForegroundStats();
-          registry.appendActivity(cursorAgentId, {
-            name: String(event.data['name'] ?? 'tool'),
-            description: String(event.data['name'] ?? 'tool'),
-            at: Date.now(),
-          });
-        };
-        const updateCursorForegroundDisplay = (display: ToolResultDisplay) => {
-          if (
-            typeof display === 'object' &&
-            display !== null &&
-            'type' in display &&
-            display.type === 'task_execution' &&
-            display.tokenCount !== undefined
-          ) {
-            cursorOutputTokens = display.tokenCount;
-            refreshCursorForegroundStats();
-          }
-          updateCursorDisplay(display);
-        };
-
-        let cursorResult: ToolResult | undefined;
-        let cursorThrown = false;
         try {
+          const cursorStartedAt = Date.now();
+          let cursorToolUses = 0;
+          let cursorOutputTokens = 0;
+          const cursorToolCallIds = new Set<string>();
+          const appendCursorTranscript = createCursorTranscriptWriter(
+            jsonlPath,
+            {
+              agentId: cursorAgentId,
+              agentName: subagentConfig.name,
+              agentColor: subagentConfig.color,
+              sessionId,
+              cwd: this.config.getProjectRoot(),
+              version: this.config.getCliVersion() || 'unknown',
+              gitBranch: getCachedGitBranch(this.config.getProjectRoot()),
+              initialUserPrompt: this.params.prompt,
+            },
+          );
+          const refreshCursorForegroundStats = () => {
+            const entry = registry.get(cursorAgentId);
+            if (!entry || entry.status !== 'running') return;
+            entry.stats = cursorStats(
+              cursorToolUses,
+              cursorStartedAt,
+              cursorOutputTokens,
+            );
+          };
+          const onCursorForegroundActivity = (event: SubagentActivityEvent) => {
+            appendCursorTranscript(event);
+            if (event.type !== 'TOOL_CALL_START') return;
+            const callId = String(event.data['callId'] ?? '');
+            if (!callId || cursorToolCallIds.has(callId)) return;
+            cursorToolCallIds.add(callId);
+            cursorToolUses += 1;
+            refreshCursorForegroundStats();
+            registry.appendActivity(cursorAgentId, {
+              name: String(event.data['name'] ?? 'tool'),
+              description: String(event.data['name'] ?? 'tool'),
+              at: Date.now(),
+            });
+          };
+          const updateCursorForegroundDisplay = (
+            display: ToolResultDisplay,
+          ) => {
+            if (
+              typeof display === 'object' &&
+              display !== null &&
+              'type' in display &&
+              display.type === 'task_execution' &&
+              display.tokenCount !== undefined
+            ) {
+              cursorOutputTokens = display.tokenCount;
+              refreshCursorForegroundStats();
+            }
+            updateCursorDisplay(display);
+          };
+
           registry.register({
             agentId: cursorAgentId,
             description: this.params.description,
@@ -3109,6 +3156,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             parentAgentId: getCurrentAgentId(),
             depth: childLaunchDepth(),
           });
+          cursorRegistered = true;
           writeAgentMeta(metaPath, {
             agentId: cursorAgentId,
             agentType: subagentConfig.name,
@@ -3141,27 +3189,29 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           throw error;
         } finally {
           cursorSignal.removeEventListener('abort', onParentAbort);
-          const cursorTerminalDisplay =
-            typeof cursorResult?.returnDisplay === 'object' &&
-            cursorResult.returnDisplay !== null &&
-            'type' in cursorResult.returnDisplay &&
-            cursorResult.returnDisplay.type === 'task_execution'
-              ? cursorResult.returnDisplay
-              : undefined;
-          const cursorTerminalStatus =
-            fgAbortController.signal.aborted ||
-            cursorTerminalDisplay?.status === 'cancelled'
-              ? 'cancelled'
-              : cursorThrown ||
-                  cursorResult?.error ||
-                  cursorTerminalDisplay?.status === 'failed'
-                ? 'failed'
-                : 'completed';
-          patchAgentMeta(metaPath, {
-            status: cursorTerminalStatus,
-            lastUpdatedAt: new Date().toISOString(),
-          });
-          registry.unregisterForeground(cursorAgentId);
+          if (cursorRegistered) {
+            const cursorTerminalDisplay =
+              typeof cursorResult?.returnDisplay === 'object' &&
+              cursorResult.returnDisplay !== null &&
+              'type' in cursorResult.returnDisplay &&
+              cursorResult.returnDisplay.type === 'task_execution'
+                ? cursorResult.returnDisplay
+                : undefined;
+            const cursorTerminalStatus =
+              fgAbortController.signal.aborted ||
+              cursorTerminalDisplay?.status === 'cancelled'
+                ? 'cancelled'
+                : cursorThrown ||
+                    cursorResult?.error ||
+                    cursorTerminalDisplay?.status === 'failed'
+                  ? 'failed'
+                  : 'completed';
+            patchAgentMeta(metaPath, {
+              status: cursorTerminalStatus,
+              lastUpdatedAt: new Date().toISOString(),
+            });
+            registry.unregisterForeground(cursorAgentId);
+          }
         }
       }
 
