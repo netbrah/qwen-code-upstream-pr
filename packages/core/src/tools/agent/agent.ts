@@ -131,7 +131,11 @@ import type {
 import { getGitBranch } from '../../utils/gitUtils.js';
 import { buildModelIdContext, resolveModelId } from '../../utils/modelId.js';
 import type { AuthOverrides } from '../../models/content-generator-config.js';
-import { CursorAgentInvocation } from '../../agents/cursor/index.js';
+import {
+  CursorAgentInvocation,
+  createCursorTranscriptWriter,
+  type SubagentActivityEvent,
+} from '../../agents/cursor/index.js';
 import type { CursorAgentDefinition } from '../../agents/cursor/index.js';
 import type { CursorToolRegistryLike } from '../../agents/cursor/cursor-custom-tools.js';
 import { partToString } from '../../utils/partUtils.js';
@@ -2765,6 +2769,38 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           { query: this.params.prompt },
         );
         const cursorSignal = signal ?? new AbortController().signal;
+        const updateCursorDisplay = (display: ToolResultDisplay): void => {
+          if (
+            typeof display !== 'object' ||
+            display === null ||
+            !('type' in display) ||
+            display.type !== 'task_execution'
+          ) {
+            updateOutput?.(display);
+            return;
+          }
+          const {
+            type: _type,
+            subagentName: _subagentName,
+            subagentColor: _subagentColor,
+            taskDescription: _taskDescription,
+            taskPrompt: _taskPrompt,
+            ...updates
+          } = display;
+          this.updateDisplay(updates, updateOutput);
+        };
+
+        const cursorStats = (
+          toolUses: number,
+          startedAt: number,
+          outputTokens = 0,
+        ) => ({
+          totalTokens: outputTokens,
+          outputTokens,
+          toolUses,
+          durationMs: Date.now() - startedAt,
+        });
+
         // Background delegation for cursor agents. Mirrors the ordinary
         // non-cursor background path: register in the
         // BackgroundTaskRegistry, return a "started" result immediately,
@@ -2793,6 +2829,57 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             sessionId,
             cursorAgentId,
           );
+          const cursorStartedAt = Date.now();
+          let cursorToolUses = 0;
+          let cursorOutputTokens = 0;
+          const appendCursorTranscript = createCursorTranscriptWriter(
+            jsonlPath,
+            {
+              agentId: cursorAgentId,
+              agentName: subagentConfig.name,
+              agentColor: subagentConfig.color,
+              sessionId,
+              cwd: this.config.getProjectRoot(),
+              version: this.config.getCliVersion() || 'unknown',
+              gitBranch: getCachedGitBranch(this.config.getProjectRoot()),
+              initialUserPrompt: this.params.prompt,
+            },
+          );
+          const refreshCursorBackgroundStats = () => {
+            const entry = registry.get(cursorAgentId);
+            if (!entry || entry.status !== 'running') return;
+            entry.stats = cursorStats(
+              cursorToolUses,
+              cursorStartedAt,
+              cursorOutputTokens,
+            );
+          };
+          const onCursorBackgroundActivity = (event: SubagentActivityEvent) => {
+            appendCursorTranscript(event);
+            if (event.type !== 'TOOL_CALL_START') return;
+            cursorToolUses += 1;
+            refreshCursorBackgroundStats();
+            registry.appendActivity(cursorAgentId, {
+              name: String(event.data['name'] ?? 'tool'),
+              description: String(event.data['name'] ?? 'tool'),
+              at: Date.now(),
+            });
+          };
+          const updateCursorBackgroundDisplay = (
+            display: ToolResultDisplay,
+          ) => {
+            if (
+              typeof display === 'object' &&
+              display !== null &&
+              'type' in display &&
+              display.type === 'task_execution' &&
+              display.tokenCount !== undefined
+            ) {
+              cursorOutputTokens = display.tokenCount;
+              refreshCursorBackgroundStats();
+            }
+            updateCursorDisplay(display);
+          };
           const bgAbortController = new AbortController();
           registry.register({
             agentId: cursorAgentId,
@@ -2832,21 +2919,59 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           // cursor agent independently of the parent's turn lifecycle —
           // mirrors the ordinary background path.
           void invocation
-            .execute(bgAbortController.signal, updateOutput)
+            .execute(
+              bgAbortController.signal,
+              updateCursorBackgroundDisplay,
+              undefined,
+              onCursorBackgroundActivity,
+            )
             .then((result) => {
+              if (
+                typeof result.returnDisplay === 'object' &&
+                result.returnDisplay !== null &&
+                'type' in result.returnDisplay &&
+                result.returnDisplay.type === 'task_execution' &&
+                result.returnDisplay.tokenCount !== undefined
+              ) {
+                cursorOutputTokens = result.returnDisplay.tokenCount;
+              }
               const text = partToString(result.llmContent);
               if (bgAbortController.signal.aborted) {
-                registry.finalizeCancelled(cursorAgentId, text);
+                registry.finalizeCancelled(
+                  cursorAgentId,
+                  text,
+                  cursorStats(
+                    cursorToolUses,
+                    cursorStartedAt,
+                    cursorOutputTokens,
+                  ),
+                );
                 persistBackgroundCancellation(metaPath, 'cancelled');
               } else if (result.error) {
-                registry.fail(cursorAgentId, text);
+                registry.fail(
+                  cursorAgentId,
+                  text,
+                  cursorStats(
+                    cursorToolUses,
+                    cursorStartedAt,
+                    cursorOutputTokens,
+                  ),
+                );
                 patchAgentMeta(metaPath, {
                   status: 'failed',
                   lastUpdatedAt: new Date().toISOString(),
                   lastError: text,
                 });
               } else {
-                registry.complete(cursorAgentId, text);
+                registry.complete(
+                  cursorAgentId,
+                  text,
+                  cursorStats(
+                    cursorToolUses,
+                    cursorStartedAt,
+                    cursorOutputTokens,
+                  ),
+                );
                 patchAgentMeta(metaPath, {
                   status: 'completed',
                   lastUpdatedAt: new Date().toISOString(),
@@ -2859,7 +2984,15 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
               debugLogger.warn(
                 `[Agent] background cursor agent ${cursorAgentId} failed: ${errorMsg}`,
               );
-              registry.fail(cursorAgentId, errorMsg);
+              registry.fail(
+                cursorAgentId,
+                errorMsg,
+                cursorStats(
+                  cursorToolUses,
+                  cursorStartedAt,
+                  cursorOutputTokens,
+                ),
+              );
               patchAgentMeta(metaPath, {
                 status: 'failed',
                 lastUpdatedAt: new Date().toISOString(),
@@ -2879,7 +3012,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             returnDisplay: this.currentDisplay!,
           };
         }
-        return invocation.execute(cursorSignal, updateOutput);
+        return invocation.execute(cursorSignal, updateCursorDisplay);
       }
 
       // Headless forks always use the background registry, even when

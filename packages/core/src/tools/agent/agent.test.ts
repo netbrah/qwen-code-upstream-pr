@@ -18,6 +18,8 @@ import { type Config, ApprovalMode } from '../../config/config.js';
 import { SubagentManager } from '../../subagents/subagent-manager.js';
 import type { SubagentConfig } from '../../subagents/types.js';
 import { BUBBLE_APPROVAL_MODE } from '../../subagents/types.js';
+import type { SubagentActivityEvent } from '../../agents/cursor/types.js';
+import type { ShellExecutionConfig } from '../../services/shellExecutionService.js';
 import {
   buildChildMessage,
   buildForkedMessages,
@@ -75,11 +77,18 @@ function escapeRegExp(value: string): string {
 vi.mock('../../subagents/subagent-manager.js');
 vi.mock('../../agents/runtime/agent-headless.js');
 
-const { mockCursorExecute, mockCursorConstructor } = vi.hoisted(() => {
+const {
+  mockCursorExecute,
+  mockCursorConstructor,
+  mockCursorTranscriptAppend,
+  mockCreateCursorTranscriptWriter,
+} = vi.hoisted(() => {
   interface CursorInvocationMock {
     execute: (
       signal?: AbortSignal,
       updateOutput?: (output: ToolResultDisplay) => void,
+      shellExecutionConfig?: ShellExecutionConfig,
+      onActivity?: (event: SubagentActivityEvent) => void,
     ) => Promise<{
       llmContent: PartListUnion;
       returnDisplay: ToolResultDisplay;
@@ -90,6 +99,8 @@ const { mockCursorExecute, mockCursorConstructor } = vi.hoisted(() => {
     (
       signal?: AbortSignal,
       updateOutput?: (output: ToolResultDisplay) => void,
+      shellExecutionConfig?: ShellExecutionConfig,
+      onActivity?: (event: SubagentActivityEvent) => void,
     ) => Promise<{
       llmContent: PartListUnion;
       returnDisplay: ToolResultDisplay;
@@ -103,7 +114,16 @@ const { mockCursorExecute, mockCursorConstructor } = vi.hoisted(() => {
         params: { query: string },
       ) => CursorInvocationMock
     >();
-  return { mockCursorExecute, mockCursorConstructor };
+  const mockCursorTranscriptAppend = vi.fn();
+  const mockCreateCursorTranscriptWriter = vi
+    .fn()
+    .mockReturnValue(mockCursorTranscriptAppend);
+  return {
+    mockCursorExecute,
+    mockCursorConstructor,
+    mockCursorTranscriptAppend,
+    mockCreateCursorTranscriptWriter,
+  };
 });
 
 vi.mock('../../agents/cursor/index.js', () => ({
@@ -117,6 +137,7 @@ vi.mock('../../agents/cursor/index.js', () => ({
     this.params = params;
     this.execute = mockCursorExecute;
   }),
+  createCursorTranscriptWriter: mockCreateCursorTranscriptWriter,
 }));
 
 // Spies for the subagent-span layer so tests can assert what status taxonomy
@@ -7128,6 +7149,7 @@ describe('AgentTool', () => {
         'External invocation — cursor SDK drives the loop; this systemPrompt is unused by the SDK.',
       tools: [],
       level: 'builtin',
+      color: 'cyan',
       runConfig: { max_time_minutes: 150, max_turns: 300 },
       externalInvocation: {
         kind: 'cursor',
@@ -7145,6 +7167,11 @@ describe('AgentTool', () => {
     afterEach(() => {
       mockCursorExecute.mockReset();
       mockCursorConstructor.mockReset();
+      mockCursorTranscriptAppend.mockReset();
+      mockCreateCursorTranscriptWriter.mockReset();
+      mockCreateCursorTranscriptWriter.mockReturnValue(
+        mockCursorTranscriptAppend,
+      );
       vi.mocked(mockSubagentManager.createAgentHeadless).mockClear();
     });
 
@@ -7236,13 +7263,162 @@ describe('AgentTool', () => {
           subagent_type: 'file-search',
           run_in_background: false,
         });
-        await invocation.execute(new AbortController().signal);
+        const updateOutput = vi.fn();
+        await invocation.execute(new AbortController().signal, updateOutput);
 
         expect(
           vi.mocked(mockSubagentManager.createAgentHeadless),
         ).toHaveBeenCalledTimes(1);
+        expect(updateOutput).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'task_execution',
+            taskDescription: 'Search files',
+            taskPrompt: 'Find files',
+          }),
+        );
         expect(mockCursorConstructor).not.toHaveBeenCalled();
         expect(mockCursorExecute).not.toHaveBeenCalled();
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('keeps initialized cursor display identity while merging cursor progress', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        mockCursorExecute.mockImplementation(async (_signal, updateOutput) => {
+          updateOutput?.({
+            type: 'task_execution',
+            subagentName: 'cursor-coder',
+            taskDescription: 'Do cursor work',
+            taskPrompt: 'Do cursor work',
+            status: 'running',
+            result: 'Inspecting files',
+            toolCalls: [
+              {
+                callId: 'read-1',
+                name: 'Read',
+                status: 'executing',
+              },
+            ],
+          });
+          return { llmContent: 'cursor ran', returnDisplay: 'cursor ran' };
+        });
+        const updates: ToolResultDisplay[] = [];
+        const invocation = agentTool.build({
+          description: 'Show a meaningful UI description',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: false,
+        });
+
+        await invocation.execute(new AbortController().signal, (display) => {
+          updates.push(display);
+        });
+
+        const progress = updates.find(
+          (display): display is AgentResultDisplay =>
+            typeof display === 'object' &&
+            display !== null &&
+            'type' in display &&
+            display.type === 'task_execution' &&
+            display.result === 'Inspecting files',
+        );
+        expect(progress).toMatchObject({
+          subagentName: 'cursor-coder',
+          subagentColor: cursorCoderConfig.color,
+          taskDescription: 'Show a meaningful UI description',
+          taskPrompt: 'Do cursor work',
+          status: 'running',
+        });
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('records background cursor activity, transcript, and terminal stats', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        const registry = config.getBackgroundTaskRegistry();
+        const complete = vi.mocked(registry.complete);
+        mockCursorExecute.mockImplementation(
+          async (_signal, _update, _shellExecutionConfig, onActivity) => {
+            onActivity?.({
+              isSubagentActivityEvent: true,
+              agentName: 'cursor-coder',
+              type: 'TOOL_CALL_START',
+              data: {
+                callId: 'read-1',
+                name: 'Read',
+                args: { file_path: 'README.md' },
+              },
+            });
+            onActivity?.({
+              isSubagentActivityEvent: true,
+              agentName: 'cursor-coder',
+              type: 'TOOL_CALL_END',
+              data: {
+                callId: 'read-1',
+                name: 'Read',
+                result: { output: '# Readme' },
+                isError: false,
+              },
+            });
+            return {
+              llmContent: 'cursor complete',
+              returnDisplay: {
+                type: 'task_execution',
+                subagentName: 'cursor-coder',
+                taskDescription: 'Do cursor work',
+                taskPrompt: 'Do cursor work',
+                status: 'completed',
+                tokenCount: 9,
+              },
+            };
+          },
+        );
+        const invocation = agentTool.build({
+          description: 'Run cursor in the background',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: true,
+        });
+
+        await invocation.execute(new AbortController().signal);
+        await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+
+        const [, , shellExecutionConfig, onActivity] =
+          mockCursorExecute.mock.calls[0] ?? [];
+        expect(shellExecutionConfig).toBeUndefined();
+        expect(onActivity).toBeTypeOf('function');
+        expect(mockCreateCursorTranscriptWriter).toHaveBeenCalledWith(
+          expect.stringMatching(/agent-cursor-coder-/),
+          expect.objectContaining({ initialUserPrompt: 'Do cursor work' }),
+        );
+        expect(mockCursorTranscriptAppend).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(registry.appendActivity)).toHaveBeenCalledWith(
+          expect.stringMatching(/^cursor-coder-/),
+          expect.objectContaining({ name: 'Read' }),
+        );
+        expect(complete).toHaveBeenCalledWith(
+          expect.stringMatching(/^cursor-coder-/),
+          'cursor complete',
+          expect.objectContaining({ toolUses: 1, outputTokens: 9 }),
+        );
       } finally {
         if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
         else process.env['CURSOR_API_KEY'] = priorKey;
