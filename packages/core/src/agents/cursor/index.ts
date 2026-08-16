@@ -9,6 +9,10 @@ export {
   resolveSettingSources,
 } from './cursor-invocation.js';
 export { buildCustomTools } from './cursor-custom-tools.js';
+export {
+  createCursorTranscriptWriter,
+  type CursorTranscriptWriterOptions,
+} from './cursor-transcript.js';
 export { CursorSdkOutputSuppressor } from './cursor-sdk-output-suppression.js';
 export {
   installCursorMcpToolTimeoutOverride,
