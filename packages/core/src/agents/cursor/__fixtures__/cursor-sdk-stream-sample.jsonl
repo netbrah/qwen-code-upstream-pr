@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","agent_id":"a1","run_id":"r1","model":{"id":"cursor-fast"},"tools":["read","edit","shell"]}
+{"type":"thinking","agent_id":"a1","run_id":"r1","text":"Planning the change"}
+{"type":"assistant","agent_id":"a1","run_id":"r1","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the file first."}]}}
+{"type":"assistant","agent_id":"a1","run_id":"r1","message":{"role":"assistant","content":[{"type":"tool_use","id":"call1","name":"read","input":{"path":"src/index.ts"}}]}}
+{"type":"tool_call","agent_id":"a1","run_id":"r1","call_id":"call1","name":"read","status":"running","args":{"path":"src/index.ts"}}
+{"type":"tool_call","agent_id":"a1","run_id":"r1","call_id":"call1","name":"read","status":"completed","result":{"success":{"message":"Read 10 lines"}}}
+{"type":"status","agent_id":"a1","run_id":"r1","status":"FINISHED"}

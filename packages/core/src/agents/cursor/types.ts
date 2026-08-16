@@ -113,6 +113,14 @@ export interface CursorUsageMessage {
   usage: CursorTokenUsage;
 }
 
+export interface CursorInteractionQueryMessage {
+  type: 'interaction_query';
+  subtype: 'request' | 'response';
+  query_type: string;
+  query?: { id?: number; [innerQueryKey: string]: unknown };
+  response?: { id?: number; [innerResponseKey: string]: unknown };
+}
+
 export type CursorSDKMessage =
   | CursorSystemMessage
   | CursorUserMessage
@@ -122,7 +130,8 @@ export type CursorSDKMessage =
   | CursorStatusMessage
   | CursorRequestMessage
   | CursorTaskMessage
-  | CursorUsageMessage;
+  | CursorUsageMessage
+  | CursorInteractionQueryMessage;
 
 export type CursorRunResultStatus = 'finished' | 'error' | 'cancelled';
 
@@ -152,7 +161,7 @@ export interface CursorRunResult {
 }
 
 export interface CursorSdkErrorLike extends Error {
-  readonly isRetryable?: boolean;
+  readonly isRetryable: boolean;
   readonly code?: string;
   readonly status?: number;
   readonly cause?: unknown;
@@ -193,4 +202,29 @@ export interface CursorModelParams {
   reasoning?: string;
   effort?: string;
   thinking?: boolean;
+}
+
+export interface SubagentActivityEvent {
+  isSubagentActivityEvent: true;
+  agentName: string;
+  type:
+    | 'THOUGHT_CHUNK'
+    | 'TOOL_CALL_START'
+    | 'TOOL_CALL_END'
+    | 'ERROR'
+    | 'PERMISSION_GATE';
+  data: Record<string, unknown>;
+}
+
+export interface SubagentActivityItem {
+  id: string;
+  type: 'thought' | 'tool_call';
+  content: string;
+  args?: string;
+  status: 'running' | 'completed' | 'error' | 'cancelled';
+}
+
+export interface OutputObject {
+  result: string;
+  terminate_reason: import('../../agents/runtime/agent-types.js').AgentTerminateMode;
 }
