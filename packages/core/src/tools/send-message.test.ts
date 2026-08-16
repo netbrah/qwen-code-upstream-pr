@@ -35,6 +35,18 @@ describe('SendMessageTool — team mode', () => {
     expect(tool.name).toBe('send_message');
   });
 
+  it('keeps the shutdown discriminator optional in its authored schema', () => {
+    const tool = new SendMessageTool(makeTeamConfig());
+    const schema = tool.schema.parametersJsonSchema as {
+      properties: { type: { enum: string[] } };
+      required?: string[];
+    };
+
+    expect(schema.required).toEqual(['message']);
+    expect(schema.required).not.toContain('type');
+    expect(schema.properties.type.enum).toEqual(['shutdown_request']);
+  });
+
   it('sends a message via TeamManager', async () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const tool = new SendMessageTool(
@@ -59,6 +71,42 @@ describe('SendMessageTool — team mode', () => {
       'leader',
       undefined,
     );
+  });
+
+  it('routes an omitted discriminator from a teammate to leader delivery', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const requestShutdown = vi.fn().mockResolvedValue(undefined);
+    const tool = new SendMessageTool(
+      makeTeamConfig({
+        teamManager: {
+          sendMessage,
+          broadcast: vi.fn(),
+          requestShutdown,
+        },
+      }),
+    );
+
+    const result = await runWithTeammateIdentity(
+      {
+        agentName: 'worker',
+        teamName: 'team',
+        agentId: 'worker@team',
+        isTeamLead: false,
+      },
+      () =>
+        tool
+          .build({ to: 'leader', message: 'FIXTURE_REPORT' })
+          .execute(new AbortController().signal),
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(
+      'leader',
+      'FIXTURE_REPORT',
+      'worker',
+      undefined,
+    );
+    expect(requestShutdown).not.toHaveBeenCalled();
   });
 
   it('broadcasts with "*"', async () => {

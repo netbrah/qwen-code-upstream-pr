@@ -22,6 +22,8 @@ import {
 import type OpenAI from 'openai';
 import { convertToFunctionResponse } from '../coreToolScheduler.js';
 import { getToolCallPreparations } from '../tool-call-preparation.js';
+import { SendMessageTool } from '../../tools/send-message.js';
+import type { Config } from '../../config/config.js';
 import { isOpenAIReasoningThoughtPart } from '../../utils/thoughtUtils.js';
 import { getGenAiUsageProvenance } from '../../telemetry/gen-ai-usage.js';
 
@@ -407,6 +409,38 @@ describe('OpenAIContentConverter', () => {
       expect(fn?.name).toBe('list_sessions');
       expect(fn?.args).toEqual({});
       expect(fn?.id).toBe('call_noargs');
+    });
+
+    it('preserves omitted send_message type from streamed tool-call args', () => {
+      const stream = withStreamParser();
+      converter.convertOpenAIChunkToGemini(
+        streamChunk('open', {
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_send_message',
+              function: {
+                name: 'send_message',
+                arguments: '{"to":"leader","message":"FIXTURE_REPORT"}',
+              },
+            },
+          ],
+        }),
+        stream,
+      );
+      const result = converter.convertOpenAIChunkToGemini(
+        streamChunk('finish', {}, 'tool_calls'),
+        stream,
+      );
+      const functionCall = result.candidates?.[0]?.content?.parts?.find(
+        (part: Part) => part.functionCall,
+      )?.functionCall;
+
+      expect(functionCall?.args).toEqual({
+        to: 'leader',
+        message: 'FIXTURE_REPORT',
+      });
+      expect(functionCall?.args).not.toHaveProperty('type');
     });
 
     it('ignores a phantom slot beside a valid tool call', () => {
@@ -5879,6 +5913,23 @@ describe('OpenAIContentConverter', () => {
       const result = await converter.convertGeminiToolsToOpenAI(strictTools);
       const params = result[0]!.function.parameters as Record<string, unknown>;
       expect(params['additionalProperties']).toBe(false);
+    });
+
+    it('preserves the optional send_message discriminator on the Chat wire', async () => {
+      const tool = new SendMessageTool({} as Config);
+      const result = await converter.convertGeminiToolsToOpenAI([
+        { functionDeclarations: [tool.schema] },
+      ] as Tool[]);
+      const parameters = result[0]!.function.parameters as {
+        additionalProperties?: boolean;
+        properties: { type: { enum: string[] } };
+        required?: string[];
+      };
+
+      expect(parameters.required).toEqual(['message']);
+      expect(parameters.required).not.toContain('type');
+      expect(parameters.properties.type.enum).toEqual(['shutdown_request']);
+      expect(parameters.additionalProperties).toBeUndefined();
     });
 
     it('should convert MCP tools with parametersJsonSchema field', async () => {

@@ -158,37 +158,38 @@ git add packages/core/src/agents/team/promptAddendum.test.ts packages/core/src/t
 git commit -m "test(team): reproduce stale communication prompts"
 ```
 
-### Task 4: Provider Tool-Contract Characterization
+### Task 4: Tool-Contract Wire Characterization
 
 **Files:**
+- Modify: `packages/core/src/tools/send-message.test.ts`
 - Modify: `packages/core/src/core/openaiContentGenerator/converter.test.ts`
-- Create or modify the existing Responses/Anthropic converter test nearest its function-schema serialization path
 - Modify: `docs/design/2026-08-16-agent-team-reproduction-results.md`
 
 **Interfaces:**
-- Consumes: the actual `send_message` function declaration schema.
-- Produces: provider-specific assertions that report whether optional properties are preserved or a closed object can force `type: 'shutdown_request'`.
+- Consumes: the actual `send_message` declaration, OpenAI Chat schema conversion, streamed OpenAI tool-call parsing, and the real tool invocation.
+- Produces: green, hermetic characterizations of the in-repo boundaries that must preserve an omitted discriminator.
 
-- [ ] **Step 1: Add a passing source-schema control**
+**Scope decision:** this branch does not claim an external gateway coerces or a model invents `type: 'shutdown_request'`. The main OpenAI tool-call content-generation path in this worktree uses Chat Completions, not Responses; separate Responses API use elsewhere is out of scope. These tests prove only that Qwen’s authored declaration, Chat converter, inbound parser, and handler preserve omission; a live correlated provider capture is still required to attribute the observed injected discriminator.
 
-Instantiate `SendMessageTool`, inspect its declaration, and assert:
+- [x] **Step 1: Add authored-schema and invocation controls**
 
-```ts
-expect(parameters.required).toEqual(['message']);
-expect(parameters.properties.type).toMatchObject({
-  enum: ['shutdown_request'],
-});
+Assert that the actual declaration requires only `message`, exposes `type` as an optional shutdown-only enum, and routes an omitted-type call under a teammate identity to `teamManager.sendMessage` without calling `requestShutdown`.
+
+- [x] **Step 2: Add OpenAI Chat wire assertions**
+
+Convert the real declaration through `convertGeminiToolsToOpenAI()` and assert its required list remains `['message']`, its enum remains shutdown-only, and optional-field relaxation removes top-level `additionalProperties: false`. Feed a streamed omitted-type `send_message` call and assert parsed args contain only the fixed fixture recipient and report.
+
+- [x] **Step 3: Run focused characterizations and record outcomes**
+
+Run:
+
+```bash
+cd packages/core && npx vitest run src/tools/send-message.test.ts src/core/openaiContentGenerator/converter.test.ts
 ```
 
-- [ ] **Step 2: Add provider-wire assertions**
+Observed: 244 tests pass. No in-repo RED assertion is sound because current Qwen source preserves the desired contract.
 
-For each provider path that serializes the actual declaration, assert that optional `type` is not advertised as required. Where the current path preserves `additionalProperties: false` and cannot guarantee optional-field compatibility, make the test RED and record that as an unprotected boundary rather than claiming it reproduces a particular remote gateway.
-
-- [ ] **Step 3: Run focused converter tests and record exact outcomes**
-
-Run the smallest package-local Vitest command for the touched converter files. Record which tests are green controls and which paths are RED.
-
-- [ ] **Step 4: Commit the characterization tests**
+- [ ] **Step 4: Review and commit the characterization tests**
 
 ```bash
 git add packages/core/src/core/openaiContentGenerator/converter.test.ts docs/design/2026-08-16-agent-team-reproduction-results.md

@@ -28,3 +28,12 @@
 - **Controls:** 12 tests pass, including the read-only prompt’s existing automatic-final-delivery wording.
 - **Failures:** ordinary and plan-required prompts omit automatic-final-delivery wording; the ordinary prompt calls explicit reporting the “ONLY way”; and the TeamCreate description promises a peer-DM summary in a leader idle notification that the runtime does not provide.
 - **Scope:** normal and plan-required prompts must align with the runtime’s automatic final-answer forwarding. Explicit messaging remains available for intentional interim coordination. This branch selects removal—not implementation—of the unsupported peer-summary promise.
+
+## `send_message` schema and OpenAI Chat boundary
+
+- **Tests:** authored declaration and omitted-type routing in `SendMessageTool`; real declaration conversion and streamed omitted-type parsing in `OpenAIContentConverter`.
+- **Command:** `cd packages/core && npx vitest run src/tools/send-message.test.ts src/core/openaiContentGenerator/converter.test.ts`
+- **Branch base:** `4a281f2efcde865b578bbe09e46f1e311112015a` (`main`)
+- **Prior evidence checkpoint:** `e6e01536ee` (`test(team): reproduce stale communication prompts`)
+- **Outcome:** 244 tests pass. The authored schema and converted Chat wire require only `message`; `type` remains the optional `shutdown_request` enum; Chat conversion removes top-level `additionalProperties: false` because the declaration has optional fields; streamed omitted-type fixture arguments remain omitted; and the real teammate invocation routes to normal leader delivery without requesting shutdown.
+- **Scope:** this is hermetic evidence for Qwen’s authored-schema, converter, parser, and handler boundaries only. It cannot distinguish an external gateway injecting `type` from a model selecting the optional enum; that attribution requires correlated live provider capture. The relevant main OpenAI tool-call content-generation path uses Chat Completions rather than Responses; separate Responses API use elsewhere is out of scope.
