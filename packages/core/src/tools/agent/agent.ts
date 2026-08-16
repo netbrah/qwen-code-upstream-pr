@@ -131,6 +131,9 @@ import type {
 import { getGitBranch } from '../../utils/gitUtils.js';
 import { buildModelIdContext, resolveModelId } from '../../utils/modelId.js';
 import type { AuthOverrides } from '../../models/content-generator-config.js';
+import { CursorAgentInvocation } from '../../agents/cursor/index.js';
+import type { CursorAgentDefinition } from '../../agents/cursor/index.js';
+import type { CursorToolRegistryLike } from '../../agents/cursor/cursor-custom-tools.js';
 
 // Memoize git branch per cwd for the agent-launch path. `getGitBranch`
 // shells out to `git rev-parse` synchronously; caching avoids the per-launch
@@ -2684,6 +2687,52 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
       this.setupEventListeners(updateOutput);
       if (updateOutput) {
         updateOutput(this.currentDisplay);
+      }
+
+      const externalInvocation = subagentConfig.externalInvocation;
+      if (externalInvocation?.kind === 'cursor') {
+        const definition: CursorAgentDefinition = {
+          kind: 'cursor',
+          name: subagentConfig.name,
+          description: subagentConfig.description,
+          cursorModel: externalInvocation.cursorModel,
+          trust: externalInvocation.trust,
+          isolatedCwd: externalInvocation.isolatedCwd,
+          ...(externalInvocation.cursorRun !== undefined
+            ? { cursorRun: externalInvocation.cursorRun }
+            : {}),
+          ...(externalInvocation.modelParams !== undefined
+            ? { modelParams: externalInvocation.modelParams }
+            : {}),
+          ...(subagentConfig.runConfig
+            ? {
+                runConfig: {
+                  ...(subagentConfig.runConfig.max_time_minutes !== undefined
+                    ? {
+                        maxTimeMinutes:
+                          subagentConfig.runConfig.max_time_minutes,
+                      }
+                    : {}),
+                  ...(subagentConfig.runConfig.max_turns !== undefined
+                    ? { maxTurns: subagentConfig.runConfig.max_turns }
+                    : {}),
+                },
+              }
+            : {}),
+        };
+        const invocation = new CursorAgentInvocation(
+          definition,
+          {
+            config: this.config,
+            toolRegistry:
+              this.config.getToolRegistry() as unknown as CursorToolRegistryLike,
+          },
+          { query: this.params.prompt },
+        );
+        return invocation.execute(
+          signal ?? new AbortController().signal,
+          updateOutput,
+        );
       }
 
       // Headless forks always use the background registry, even when

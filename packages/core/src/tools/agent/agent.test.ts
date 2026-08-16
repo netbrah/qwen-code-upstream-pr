@@ -75,6 +75,51 @@ function escapeRegExp(value: string): string {
 vi.mock('../../subagents/subagent-manager.js');
 vi.mock('../../agents/runtime/agent-headless.js');
 
+const { mockCursorExecute, mockCursorConstructor } = vi.hoisted(() => {
+  interface CursorInvocationMock {
+    execute: (
+      signal?: AbortSignal,
+      updateOutput?: (output: ToolResultDisplay) => void,
+    ) => Promise<{
+      llmContent: PartListUnion;
+      returnDisplay: ToolResultDisplay;
+    }>;
+    params: { query: string };
+  }
+  const mockCursorExecute =
+    vi.fn<
+      (
+        signal?: AbortSignal,
+        updateOutput?: (output: ToolResultDisplay) => void,
+      ) => Promise<{
+        llmContent: PartListUnion;
+        returnDisplay: ToolResultDisplay;
+      }>
+    >();
+  const mockCursorConstructor =
+    vi.fn<
+      (
+        definition: unknown,
+        context: unknown,
+        params: { query: string },
+      ) => CursorInvocationMock
+    >();
+  return { mockCursorExecute, mockCursorConstructor };
+});
+
+vi.mock('../../agents/cursor/index.js', () => ({
+  CursorAgentInvocation: vi.fn(function (
+    this: { execute: typeof mockCursorExecute; params: { query: string } },
+    definition: unknown,
+    context: unknown,
+    params: { query: string },
+  ) {
+    mockCursorConstructor(definition, context, params);
+    this.params = params;
+    this.execute = mockCursorExecute;
+  }),
+}));
+
 // Spies for the subagent-span layer so tests can assert what status taxonomy
 // was published. The real runInSubagentSpanContext sets up OTel context-with,
 // which is irrelevant here — we just need the body to run. Review wenshao
@@ -7044,6 +7089,138 @@ describe('AgentTool', () => {
         createSpy.mockRestore();
       },
     );
+  });
+
+  describe('externalInvocation dispatch hook', () => {
+    const cursorCoderConfig: SubagentConfig = {
+      name: 'cursor-coder',
+      description:
+        'A Cursor-SDK-backed coding subagent that drives an external @cursor/sdk agent loop.',
+      systemPrompt:
+        'External invocation — cursor SDK drives the loop; this systemPrompt is unused by the SDK.',
+      tools: [],
+      level: 'builtin',
+      runConfig: { max_time_minutes: 150, max_turns: 300 },
+      externalInvocation: {
+        kind: 'cursor',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+        cursorRun: {
+          sandbox: { enabled: false },
+          settingSources: ['project'],
+        },
+      },
+      isBuiltin: true,
+    };
+
+    afterEach(() => {
+      mockCursorExecute.mockReset();
+      mockCursorConstructor.mockReset();
+      vi.mocked(mockSubagentManager.createAgentHeadless).mockClear();
+    });
+
+    it('routes cursor externalInvocation to CursorAgentInvocation (not AgentHeadless)', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor ran',
+          returnDisplay: 'cursor ran',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+
+        const invocation = agentTool.build({
+          description: 'Run cursor',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          run_in_background: false,
+        });
+        const result = await invocation.execute(new AbortController().signal);
+
+        expect(mockCursorConstructor).toHaveBeenCalledTimes(1);
+        expect(mockCursorExecute).toHaveBeenCalledTimes(1);
+        expect(
+          vi.mocked(mockSubagentManager.createAgentHeadless),
+        ).not.toHaveBeenCalled();
+        expect(partToString(result.llmContent)).toBe('cursor ran');
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('routes non-external configs to AgentHeadless (unchanged)', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          mockSubagents[0],
+        );
+        vi.mocked(mockSubagentManager.createAgentHeadless).mockResolvedValue({
+          subagent: {
+            execute: vi.fn().mockResolvedValue(undefined),
+            result: 'done',
+            terminateMode: AgentTerminateMode.GOAL,
+            getCore: vi.fn().mockReturnValue({
+              modelConfig: { model: 'subagent-model' },
+            }),
+            getFinalText: vi.fn().mockReturnValue('done'),
+            formatCompactResult: vi.fn().mockReturnValue('done'),
+            getExecutionSummary: vi.fn().mockReturnValue({
+              rounds: 1,
+              totalDurationMs: 100,
+              totalToolCalls: 0,
+              successfulToolCalls: 0,
+              failedToolCalls: 0,
+              successRate: 100,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              toolUsage: [],
+            }),
+            getStatistics: vi.fn().mockReturnValue({
+              rounds: 1,
+              totalDurationMs: 100,
+              totalToolCalls: 0,
+              successfulToolCalls: 0,
+              failedToolCalls: 0,
+            }),
+            getTerminateMode: vi.fn().mockReturnValue(AgentTerminateMode.GOAL),
+          } as unknown as AgentHeadless,
+          dispose: vi.fn().mockResolvedValue(undefined),
+        });
+        MockedContextState.mockImplementation(
+          () =>
+            ({
+              set: vi.fn(),
+            }) as unknown as ContextState,
+        );
+
+        const invocation = agentTool.build({
+          description: 'Search files',
+          prompt: 'Find files',
+          subagent_type: 'file-search',
+          run_in_background: false,
+        });
+        await invocation.execute(new AbortController().signal);
+
+        expect(
+          vi.mocked(mockSubagentManager.createAgentHeadless),
+        ).toHaveBeenCalledTimes(1);
+        expect(mockCursorConstructor).not.toHaveBeenCalled();
+        expect(mockCursorExecute).not.toHaveBeenCalled();
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
   });
 });
 
