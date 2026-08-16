@@ -119,4 +119,130 @@ describe('createCursorTranscriptWriter', () => {
     expect(records[2]?.parentUuid).toBe(records[1]?.uuid);
     expect(records[3]?.parentUuid).toBe(records[2]?.uuid);
   });
+
+  it('normalizes non-object tool-call args and preserves object args', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-jsonl-'));
+    tempDirs.push(tempDir);
+    const jsonlPath = path.join(tempDir, 'subagents', 'agent-cursor.jsonl');
+    const append = createCursorTranscriptWriter(jsonlPath, {
+      agentId: 'cursor-1',
+      agentName: 'cursor-coder',
+      sessionId: 'session-1',
+      cwd: '/repo',
+      version: 'test-version',
+    });
+    const objectArgs = { file_path: 'README.md', line_start: 3 };
+
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'TOOL_CALL_START',
+      data: { callId: 'primitive-1', name: 'Read', args: 'README.md' },
+    });
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'TOOL_CALL_START',
+      data: { callId: 'array-1', name: 'Read', args: ['README.md'] },
+    });
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'TOOL_CALL_START',
+      data: { callId: 'object-1', name: 'Read', args: objectArgs },
+    });
+
+    const records = readJsonl(jsonlPath);
+    expect(records).toHaveLength(3);
+    expect(records[0]?.message?.parts).toEqual([
+      {
+        functionCall: {
+          id: 'primitive-1',
+          name: 'Read',
+          args: {},
+        },
+      },
+    ]);
+    expect(records[1]?.message?.parts).toEqual([
+      {
+        functionCall: {
+          id: 'array-1',
+          name: 'Read',
+          args: {},
+        },
+      },
+    ]);
+    expect(records[2]?.message?.parts).toEqual([
+      {
+        functionCall: {
+          id: 'object-1',
+          name: 'Read',
+          args: objectArgs,
+        },
+      },
+    ]);
+  });
+
+  it('persists error activity without fabricating permission records', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-jsonl-'));
+    tempDirs.push(tempDir);
+    const jsonlPath = path.join(tempDir, 'subagents', 'agent-cursor.jsonl');
+    const append = createCursorTranscriptWriter(jsonlPath, {
+      agentId: 'cursor-1',
+      agentName: 'cursor-coder',
+      sessionId: 'session-1',
+      cwd: '/repo',
+      version: 'test-version',
+    });
+
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'TOOL_CALL_END',
+      data: {
+        callId: 'read-1',
+        name: 'Read',
+        result: { error: 'Read failed.' },
+        isError: true,
+      },
+    });
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'ERROR',
+      data: { error: 'Cursor failed.' },
+    });
+    append({
+      isSubagentActivityEvent: true,
+      agentName: 'cursor-coder',
+      type: 'PERMISSION_GATE',
+      data: { queryType: 'cursorApprovalRequest', phase: 'request' },
+    });
+
+    const records = readJsonl(jsonlPath);
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      type: 'tool_result',
+      toolCallResult: { callId: 'read-1', status: 'error' },
+      message: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'read-1',
+              name: 'Read',
+              response: { error: 'Read failed.' },
+            },
+          },
+        ],
+      },
+    });
+    expect(records[1]).toMatchObject({
+      type: 'assistant',
+      message: {
+        role: 'model',
+        parts: [{ text: 'Error: Cursor failed.' }],
+      },
+    });
+  });
 });

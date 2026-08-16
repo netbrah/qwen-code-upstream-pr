@@ -14,6 +14,12 @@ export interface CursorTranscriptWriterOptions {
   initialUserPrompt?: string;
 }
 
+function asArgs(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function asResponse(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -77,7 +83,7 @@ export function createCursorTranscriptWriter(
                 functionCall: {
                   id: String(event.data['callId'] ?? ''),
                   name: String(event.data['name'] ?? 'tool'),
-                  args: (event.data['args'] ?? {}) as Record<string, unknown>,
+                  args: asArgs(event.data['args']),
                 },
               },
             ],
