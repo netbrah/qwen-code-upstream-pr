@@ -162,6 +162,13 @@ export interface SubagentConfig {
   hooks?: Record<string, unknown>;
 
   /**
+   * Optional external-agent invocation. When set, the agent tool dispatches to
+   * the named external invocation class (see ExternalAgentInvocation) instead
+   * of AgentHeadless. @see ExternalAgentInvocation
+   */
+  externalInvocation?: ExternalAgentInvocation;
+
+  /**
    * Indicates whether this is a built-in agent.
    * Built-in agents cannot be modified or deleted.
    */
@@ -171,6 +178,41 @@ export interface SubagentConfig {
    * For extension-level subagents: the name of the providing extension
    */
   extensionName?: string;
+}
+
+/**
+ * Optional external-agent invocation config. When present on a SubagentConfig,
+ * the agent tool dispatches to the named external invocation class instead of
+ * the in-process AgentHeadless loop. The `kind` discriminant selects the path.
+ *
+ * `kind: 'cursor'` routes to CursorAgentInvocation, which drives a local
+ * @cursor/sdk agent loop and bridges qwen's tool surface in via the SDK's
+ * native customTools API.
+ */
+export interface ExternalAgentInvocation {
+  kind: 'cursor';
+  /** Cursor model id. 'default' bypasses entitlement budget-exhaustion. */
+  cursorModel: string;
+  /**
+   * Boundary trust gate. Cursor owns its tool loop; qwen policy cannot veto
+   * individual in-loop calls. trust:true is the operator consent signal.
+   */
+  trust: boolean;
+  /** When true, run in a throwaway mkdtemp; otherwise inherit parent cwd. */
+  isolatedCwd: boolean;
+  /** Cursor-native run controls. */
+  cursorRun?: {
+    sandbox?: { enabled: boolean };
+    mode?: string;
+    /** Setting sources: ['project'] loads .cursor/rules etc. */
+    settingSources?: string[];
+  };
+  /** Optional model params (reasoning/effort/thinking). */
+  modelParams?: {
+    reasoning?: string;
+    effort?: string;
+    thinking?: boolean;
+  };
 }
 
 /**

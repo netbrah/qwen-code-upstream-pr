@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { SubagentError, SubagentErrorCode } from './types.js';
+import type { SubagentConfig, ExternalAgentInvocation } from './types.js';
 
 describe('SubagentError', () => {
   it('should create error with message and code', () => {
@@ -36,5 +37,49 @@ describe('SubagentError', () => {
     expect(SubagentErrorCode.FILE_ERROR).toBe('FILE_ERROR');
     expect(SubagentErrorCode.VALIDATION_ERROR).toBe('VALIDATION_ERROR');
     expect(SubagentErrorCode.TOOL_NOT_FOUND).toBe('TOOL_NOT_FOUND');
+  });
+});
+
+describe('ExternalAgentInvocation', () => {
+  it('accepts a cursor-kind discriminant', () => {
+    const inv: ExternalAgentInvocation = {
+      kind: 'cursor',
+      cursorModel: 'default',
+      trust: true,
+      isolatedCwd: false,
+      cursorRun: { sandbox: { enabled: false }, settingSources: ['project'] },
+    };
+    expect(inv.kind).toBe('cursor');
+    expect(inv.cursorModel).toBe('default');
+    expect(inv.trust).toBe(true);
+  });
+
+  it('allows optional modelParams', () => {
+    const inv: ExternalAgentInvocation = {
+      kind: 'cursor',
+      cursorModel: 'default',
+      trust: true,
+      isolatedCwd: false,
+      modelParams: { reasoning: 'high', thinking: true },
+    };
+    expect(inv.modelParams?.reasoning).toBe('high');
+  });
+});
+
+describe('SubagentConfig.externalInvocation', () => {
+  it('attaches externalInvocation to a SubagentConfig', () => {
+    const config: SubagentConfig = {
+      name: 'cursor-coder',
+      description: 'test',
+      systemPrompt: 'placeholder',
+      level: 'builtin',
+      externalInvocation: {
+        kind: 'cursor',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+      },
+    };
+    expect(config.externalInvocation?.kind).toBe('cursor');
   });
 });
