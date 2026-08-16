@@ -24,7 +24,7 @@ const OVERLAPPING_NATIVE_TOOL_NAMES = new Set([
 export interface CursorToolHandle {
   name: string;
   description: string;
-  schema: { parameters?: Record<string, unknown> };
+  schema: { parametersJsonSchema?: Record<string, unknown> };
   buildAndExecute: (
     params: Record<string, unknown>,
     signal?: AbortSignal,
@@ -54,8 +54,9 @@ export function buildCustomTools(
 
     const description = tool.description;
     const inputSchema =
-      (tool.schema.parameters as Record<string, SDKJsonValue> | undefined) ??
-      {};
+      (tool.schema.parametersJsonSchema as
+        | Record<string, SDKJsonValue>
+        | undefined) ?? {};
 
     customTools[tool.name] = {
       description,

@@ -34,7 +34,7 @@ function mockTool(
     schema: {
       name,
       description: opts?.description ?? `Tool ${name}`,
-      parameters: opts?.schema ?? { type: 'object', properties: {} },
+      parametersJsonSchema: opts?.schema ?? { type: 'object', properties: {} },
     },
     isOutputMarkdown: false,
     canUpdateOutput: false,
@@ -155,5 +155,61 @@ describe('buildCustomTools', () => {
       registry: registry as unknown as CursorToolRegistryLike,
     });
     expect(Object.keys(record)).toEqual([]);
+  });
+
+  it('reads parametersJsonSchema (not parameters) from the real tool shape', () => {
+    const realShapeTool = {
+      name: 'my_tool',
+      displayName: 'my_tool',
+      description: 'Tool my_tool',
+      kind: 0,
+      schema: {
+        name: 'my_tool',
+        description: 'Tool my_tool',
+        parametersJsonSchema: {
+          type: 'object',
+          properties: { foo: { type: 'string' } },
+        },
+      },
+      isOutputMarkdown: false,
+      canUpdateOutput: false,
+      build: vi.fn(() => ({ execute: vi.fn() })),
+      buildAndExecute: vi.fn(async () => ({ llmContent: 'result' })),
+    };
+    const registry = { getAllTools: () => [realShapeTool] };
+    const record = buildCustomTools({
+      registry: registry as unknown as CursorToolRegistryLike,
+    });
+    expect(record['my_tool'].inputSchema).toEqual({
+      type: 'object',
+      properties: { foo: { type: 'string' } },
+    });
+    expect(record['my_tool'].inputSchema).not.toEqual({});
+  });
+
+  it('CONTROL: does not read the nonexistent parameters field', () => {
+    const toolWithOnlyParameters = {
+      name: 'legacy',
+      displayName: 'legacy',
+      description: 'legacy',
+      kind: 0,
+      schema: {
+        name: 'legacy',
+        description: 'legacy',
+        parameters: {
+          type: 'object',
+          properties: { bar: { type: 'string' } },
+        },
+      },
+      isOutputMarkdown: false,
+      canUpdateOutput: false,
+      build: vi.fn(() => ({ execute: vi.fn() })),
+      buildAndExecute: vi.fn(async () => ({ llmContent: 'x' })),
+    };
+    const registry = { getAllTools: () => [toolWithOnlyParameters] };
+    const record = buildCustomTools({
+      registry: registry as unknown as CursorToolRegistryLike,
+    });
+    expect(record['legacy'].inputSchema).toEqual({});
   });
 });
