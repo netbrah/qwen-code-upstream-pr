@@ -97,6 +97,37 @@ describe('TaskListTool', () => {
     expect(result.llmContent).not.toContain('Pending');
   });
 
+  it('treats blank optional filters as omitted', async () => {
+    const pending = await createTask(TEAM, {
+      subject: 'Pending task',
+      description: 'desc',
+    });
+    const running = await createTask(TEAM, {
+      subject: 'Running task',
+      description: 'desc',
+    });
+    await updateTask(TEAM, running.id, {
+      status: 'in_progress',
+      owner: 'worker',
+    });
+
+    const pendingResult = await tool
+      .build({ status: 'pending', owner: '', blockedBy: '' })
+      .execute(new AbortController().signal);
+    const runningResult = await tool
+      .build({ status: 'in_progress', owner: '', blockedBy: '' })
+      .execute(new AbortController().signal);
+
+    expect(pendingResult.llmContent).toContain(pending.subject);
+    expect(runningResult.llmContent).toContain(running.subject);
+
+    const ownerControl = await tool
+      .build({ owner: 'worker' })
+      .execute(new AbortController().signal);
+    expect(ownerControl.llmContent).toContain(running.subject);
+    expect(ownerControl.llmContent).not.toContain(pending.subject);
+  });
+
   it('returns TaskListResultDisplay', async () => {
     await createTask(TEAM, {
       subject: 'Task X',
