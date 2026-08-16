@@ -118,30 +118,30 @@ git commit -m "test(team): reproduce stranded manual assignment"
 
 **Files:**
 - Modify: `packages/core/src/agents/team/promptAddendum.test.ts`
-- Modify: `packages/core/src/tools/team-create.test.ts` or the existing test nearest the leader-facing team instructions
+- Modify: `packages/core/src/tools/team-create.test.ts`
 - Modify: `docs/design/2026-08-16-agent-team-reproduction-results.md`
 
 **Interfaces:**
 - Consumes: `buildTeammatePromptAddendum()` and team-create instructional text.
-- Produces: failing tests that establish the desired worker/leader communication contract.
+- Produces: independent failing tests for stale final-delivery wording and an unsupported peer-summary promise.
 
-- [ ] **Step 1: Write failing prompt-contract assertions**
+**Contract decision:** the runtime automatically forwards an unreported final answer when a teammate becomes idle. Normal and plan-required prompts must say so, and must reserve explicit `send_message` for intentional interim communication. The leader-facing peer-DM summary promise is unsupported and must be removed; this evidence branch does not require a new leader-observability feature.
 
-Assert that normal, plan-required, and read-only teammate instructions all state that final answers are automatically delivered and that explicit `send_message` is for intentional interim communication. Assert that the ordinary prompt does not call explicit reports the “ONLY way” to deliver completion.
+- [x] **Step 1: Write isolated prompt-contract assertions**
 
-- [ ] **Step 2: Write a failing peer-visibility assertion**
+The normal profile must state automatic final delivery and must not call explicit reporting the only delivery path. The plan-required profile must state automatic final delivery. The read-only profile is a separate passing control because it already describes automatic forwarding.
 
-Choose one explicit contract and encode it exactly:
+- [x] **Step 2: Write a failing peer-visibility assertion**
 
 ```ts
-expect(teamCreateInstruction).not.toContain(
+expect(tool.description).not.toContain(
   'a brief summary is included in their idle notification',
 );
 ```
 
-This test intentionally fails until the inaccurate promise is removed or the runtime is extended to supply the summary. The branch does not choose or implement either production fix.
+This pins removal of an unsupported promise rather than a runtime implementation choice.
 
-- [ ] **Step 3: Run and record RED evidence**
+- [x] **Step 3: Run and record RED evidence**
 
 Run:
 
@@ -149,9 +149,9 @@ Run:
 cd packages/core && npx vitest run src/agents/team/promptAddendum.test.ts src/tools/team-create.test.ts
 ```
 
-Expected: FAIL against the inconsistent normal/plan prompts and the unsupported peer-summary promise; existing read-only automatic-forwarding assertions remain green.
+Observed: 12 controls pass and four independent assertions fail: normal automatic-delivery wording, normal “ONLY way” wording, plan-required automatic-delivery wording, and the peer-summary promise.
 
-- [ ] **Step 4: Commit the RED tests**
+- [ ] **Step 4: Review and commit the RED tests**
 
 ```bash
 git add packages/core/src/agents/team/promptAddendum.test.ts packages/core/src/tools/team-create.test.ts docs/design/2026-08-16-agent-team-reproduction-results.md
