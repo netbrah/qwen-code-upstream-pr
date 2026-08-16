@@ -533,7 +533,6 @@ export function resolveSettingSources(
 // ---------------------------------------------------------------------------
 // CursorAgentInvocation — the executor. Drives a LOCAL @cursor/sdk agent loop
 // and maps its stream onto upstream's ToolResult / AgentResultDisplay types.
-// Ported from apex-ontap, stripped of NetApp/bridge/curl/proxy code.
 // ---------------------------------------------------------------------------
 
 /** The module specifier for the Cursor SDK. Kept as a variable so TypeScript

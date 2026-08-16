@@ -283,7 +283,6 @@ Guidelines:
       filePath: `<builtin:${agent.name}>`,
       isBuiltin: true,
     }));
-    // Elide cursor-coder when CURSOR_API_KEY is unset.
     if (!process.env['CURSOR_API_KEY']) {
       return all.filter((a) => a.name !== 'cursor-coder');
     }
@@ -296,7 +295,6 @@ Guidelines:
    * @returns Built-in agent configuration or null if not found
    */
   static getBuiltinAgent(name: string): SubagentConfig | null {
-    // Elide cursor-coder when CURSOR_API_KEY is unset.
     if (name === 'cursor-coder' && !process.env['CURSOR_API_KEY']) {
       return null;
     }
@@ -322,7 +320,6 @@ Guidelines:
    * @returns True if the name is a built-in agent
    */
   static isBuiltinAgent(name: string): boolean {
-    // Elide cursor-coder when CURSOR_API_KEY is unset (consistency with getBuiltinAgents/getBuiltinAgent/getBuiltinAgentNames).
     if (name === 'cursor-coder' && !process.env['CURSOR_API_KEY']) {
       return false;
     }
@@ -338,7 +335,6 @@ Guidelines:
    */
   static getBuiltinAgentNames(): string[] {
     const names = this.BUILTIN_AGENTS.map((agent) => agent.name);
-    // Elide cursor-coder when CURSOR_API_KEY is unset.
     if (!process.env['CURSOR_API_KEY']) {
       return names.filter((n) => n !== 'cursor-coder');
     }
