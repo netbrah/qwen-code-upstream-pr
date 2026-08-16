@@ -87,3 +87,62 @@ describe('install/restore Cursor MCP timeout override', () => {
     expect(true).toBe(true);
   });
 });
+
+describe('overlapping install/restore (reference-counted)', () => {
+  const realSetTimeout = globalThis.setTimeout;
+
+  afterEach(() => {
+    restoreCursorMcpToolTimeoutOverride();
+    globalThis.setTimeout = realSetTimeout;
+  });
+
+  it('install A, install B, restore A: setTimeout still patched (B active)', () => {
+    const original = globalThis.setTimeout;
+    installCursorMcpToolTimeoutOverride();
+    installCursorMcpToolTimeoutOverride();
+    restoreCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).not.toBe(original);
+  });
+
+  it('restore B: original setTimeout restored', () => {
+    const original = globalThis.setTimeout;
+    installCursorMcpToolTimeoutOverride();
+    installCursorMcpToolTimeoutOverride();
+    restoreCursorMcpToolTimeoutOverride();
+    restoreCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).toBe(original);
+  });
+
+  it('reverse completion order: restore B first, then A', () => {
+    const original = globalThis.setTimeout;
+    installCursorMcpToolTimeoutOverride();
+    installCursorMcpToolTimeoutOverride();
+    restoreCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).not.toBe(original);
+    restoreCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).toBe(original);
+  });
+
+  it('thrown startup releases ownership via finally', () => {
+    const original = globalThis.setTimeout;
+    installCursorMcpToolTimeoutOverride();
+    let caught: unknown;
+    try {
+      throw new Error('boom');
+    } catch (e) {
+      caught = e;
+    } finally {
+      restoreCursorMcpToolTimeoutOverride();
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(globalThis.setTimeout).toBe(original);
+  });
+
+  it('CONTROL: single install/restore round-trip unchanged', () => {
+    const original = globalThis.setTimeout;
+    installCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).not.toBe(original);
+    restoreCursorMcpToolTimeoutOverride();
+    expect(globalThis.setTimeout).toBe(original);
+  });
+});

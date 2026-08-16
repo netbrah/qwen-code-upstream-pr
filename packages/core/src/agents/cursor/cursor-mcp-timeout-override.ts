@@ -41,6 +41,7 @@ type DelegateSetTimeout = (
 ) => ReturnType<GlobalSetTimeout>;
 
 let originalSetTimeout: GlobalSetTimeout | undefined;
+let refCount = 0;
 let installedToolTimeoutMs = DEFAULT_CURSOR_MCP_TOOL_TIMEOUT_MS;
 let installedConnectTimeoutMs = DEFAULT_CURSOR_MCP_CONNECT_TIMEOUT_MS;
 
@@ -132,8 +133,10 @@ function patchedSetTimeout(
 
 /**
  * Installs the scoped Cursor MCP timeout override. Idempotent: a second install
- * only refreshes the configured timeouts. Always pair with
- * {@link restoreCursorMcpToolTimeoutOverride} in a `finally`.
+ * only refreshes the configured timeouts. Reference-counted so overlapping
+ * runs do not clobber each other — the original is restored only when the last
+ * owner calls {@link restoreCursorMcpToolTimeoutOverride}. Always pair with
+ * restore in a `finally`.
  */
 export function installCursorMcpToolTimeoutOverride(
   options: CursorMcpToolTimeoutOverrideOptions = {},
@@ -145,10 +148,11 @@ export function installCursorMcpToolTimeoutOverride(
     options.connectTimeoutMs ?? DEFAULT_CURSOR_MCP_CONNECT_TIMEOUT_MS,
   );
 
-  if (!originalSetTimeout) {
+  if (refCount === 0) {
     originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = patchedSetTimeout as GlobalSetTimeout;
   }
+  refCount++;
 
   return {
     installed: true,
@@ -158,14 +162,24 @@ export function installCursorMcpToolTimeoutOverride(
   };
 }
 
-/** Restores the original `globalThis.setTimeout`. Safe to call when not installed. */
+/**
+ * Releases one install's ownership. Reference-counted: the original
+ * `globalThis.setTimeout` is restored only when the last owner exits. Safe to
+ * call when not installed.
+ */
 export function restoreCursorMcpToolTimeoutOverride(): void {
-  if (originalSetTimeout) {
+  if (refCount === 0) {
+    return;
+  }
+  refCount--;
+  if (refCount === 0 && originalSetTimeout) {
     globalThis.setTimeout = originalSetTimeout;
     originalSetTimeout = undefined;
   }
-  installedToolTimeoutMs = DEFAULT_CURSOR_MCP_TOOL_TIMEOUT_MS;
-  installedConnectTimeoutMs = DEFAULT_CURSOR_MCP_CONNECT_TIMEOUT_MS;
+  if (refCount === 0) {
+    installedToolTimeoutMs = DEFAULT_CURSOR_MCP_TOOL_TIMEOUT_MS;
+    installedConnectTimeoutMs = DEFAULT_CURSOR_MCP_CONNECT_TIMEOUT_MS;
+  }
 }
 
 export const cursorMcpToolTimeoutOverrideDefaults = {

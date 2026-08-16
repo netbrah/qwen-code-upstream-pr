@@ -48,40 +48,105 @@ type StreamWrite = (
 
 type WritableStream = typeof process.stdout | typeof process.stderr;
 
+let stdoutRefCount = 0;
+let stderrRefCount = 0;
+let trueOriginalStdoutWrite: StreamWrite | undefined;
+let trueOriginalStderrWrite: StreamWrite | undefined;
+let installedStdoutPatch: typeof process.stdout.write | undefined;
+let installedStderrPatch: typeof process.stderr.write | undefined;
+
+function installStream(
+  makeWrite: (original: StreamWrite) => StreamWrite,
+  kind: 'stdout' | 'stderr',
+): void {
+  if (kind === 'stdout') {
+    const current = process.stdout.write;
+    const drifted =
+      stdoutRefCount > 0 &&
+      installedStdoutPatch !== undefined &&
+      current !== installedStdoutPatch;
+    if (drifted) {
+      stdoutRefCount = 0;
+      trueOriginalStdoutWrite = undefined;
+      installedStdoutPatch = undefined;
+    }
+    if (stdoutRefCount === 0) {
+      trueOriginalStdoutWrite = current as unknown as StreamWrite;
+      const patch = makeWrite(trueOriginalStdoutWrite);
+      process.stdout.write = patch as typeof process.stdout.write;
+      installedStdoutPatch = patch as typeof process.stdout.write;
+    }
+    stdoutRefCount++;
+  } else {
+    const current = process.stderr.write;
+    const drifted =
+      stderrRefCount > 0 &&
+      installedStderrPatch !== undefined &&
+      current !== installedStderrPatch;
+    if (drifted) {
+      stderrRefCount = 0;
+      trueOriginalStderrWrite = undefined;
+      installedStderrPatch = undefined;
+    }
+    if (stderrRefCount === 0) {
+      trueOriginalStderrWrite = current as unknown as StreamWrite;
+      const patch = makeWrite(trueOriginalStderrWrite);
+      process.stderr.write = patch as typeof process.stderr.write;
+      installedStderrPatch = patch as typeof process.stderr.write;
+    }
+    stderrRefCount++;
+  }
+}
+
+function uninstallStream(kind: 'stdout' | 'stderr'): void {
+  if (kind === 'stdout') {
+    if (stdoutRefCount === 0) {
+      return;
+    }
+    stdoutRefCount--;
+    if (stdoutRefCount === 0 && trueOriginalStdoutWrite) {
+      process.stdout.write =
+        trueOriginalStdoutWrite as typeof process.stdout.write;
+      trueOriginalStdoutWrite = undefined;
+      installedStdoutPatch = undefined;
+    }
+  } else {
+    if (stderrRefCount === 0) {
+      return;
+    }
+    stderrRefCount--;
+    if (stderrRefCount === 0 && trueOriginalStderrWrite) {
+      process.stderr.write =
+        trueOriginalStderrWrite as typeof process.stderr.write;
+      trueOriginalStderrWrite = undefined;
+      installedStderrPatch = undefined;
+    }
+  }
+}
+
 /**
  * Scoped suppressor for Cursor SDK startup output. Call
  * {@link runStartupScope} around the SDK `Agent.create`/`resume` call; the
  * suppressor installs the patches on entry and restores them in `finally`.
  * {@link install} / {@link uninstall} are also exposed for standalone use.
+ *
+ * The stdout/stderr patches are reference-counted at the module level so
+ * overlapping suppressor instances do not clobber each other: the true
+ * original `write` is captured on the first install and restored only when
+ * the last owner uninstalls.
  */
 export class CursorSdkOutputSuppressor {
   private installed = false;
   private startupScopeActive = false;
-  private stdoutStream?: WritableStream;
-  private originalStdoutWrite?: StreamWrite;
-  private stderrStream?: WritableStream;
-  private originalStderrWrite?: StreamWrite;
 
-  /** Patches stdout/stderr to suppress writes. Idempotent. */
+  /** Patches stdout/stderr to suppress writes. Idempotent per-instance. */
   install(): void {
     if (this.installed) {
       return;
     }
     this.installed = true;
-
-    this.stdoutStream = process.stdout;
-    this.originalStdoutWrite = process.stdout.write as unknown as StreamWrite;
-    this.stderrStream = process.stderr;
-    this.originalStderrWrite = process.stderr.write as unknown as StreamWrite;
-
-    process.stdout.write = this.makeStreamWrite(
-      this.stdoutStream,
-      this.originalStdoutWrite,
-    ) as typeof process.stdout.write;
-    process.stderr.write = this.makeStreamWrite(
-      this.stderrStream,
-      this.originalStderrWrite,
-    ) as typeof process.stderr.write;
+    installStream((o) => this.makeStreamWrite(process.stdout, o), 'stdout');
+    installStream((o) => this.makeStreamWrite(process.stderr, o), 'stderr');
   }
 
   /**
@@ -100,25 +165,15 @@ export class CursorSdkOutputSuppressor {
     }
   }
 
-  /** Restores the original stdout/stderr. Safe if never installed. */
+  /** Releases one owner's reference; restores the true original when last. */
   uninstall(): void {
     if (!this.installed) {
       return;
     }
     this.installed = false;
     this.startupScopeActive = false;
-    if (this.stdoutStream && this.originalStdoutWrite) {
-      this.stdoutStream.write = this
-        .originalStdoutWrite as typeof process.stdout.write;
-    }
-    if (this.stderrStream && this.originalStderrWrite) {
-      this.stderrStream.write = this
-        .originalStderrWrite as typeof process.stderr.write;
-    }
-    this.stdoutStream = undefined;
-    this.stderrStream = undefined;
-    this.originalStdoutWrite = undefined;
-    this.originalStderrWrite = undefined;
+    uninstallStream('stdout');
+    uninstallStream('stderr');
   }
 
   private shouldSuppress(chunk: unknown): boolean {
