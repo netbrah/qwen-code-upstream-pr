@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   mapCursorEvent,
   extractAssistantText,
@@ -15,8 +15,8 @@ import type {
   SubagentActivityEvent,
   SubagentActivityItem,
 } from './types.js';
+import type { CursorSdkModule } from './types.js';
 
-// Mock the @cursor/sdk lazy import. The invocation does `await import('@cursor/sdk')`.
 vi.mock('@cursor/sdk', () => {
   const mockRun = {
     id: 'run-1',
@@ -428,6 +428,12 @@ describe('applyActivity', () => {
 });
 
 describe('CursorAgentInvocation.execute', () => {
+  beforeEach(async () => {
+    const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+    vi.mocked(sdk.Agent.create).mockClear();
+    vi.mocked(sdk.Agent.resume).mockClear();
+  });
+
   it('drives the SDK loop and returns a ToolResult', async () => {
     const prior = process.env['CURSOR_API_KEY'];
     process.env['CURSOR_API_KEY'] = 'test-key';
@@ -523,6 +529,86 @@ describe('CursorAgentInvocation.execute', () => {
       expect(JSON.stringify(result.llmContent)).toContain('CURSOR_API_KEY');
     } finally {
       if (prior !== undefined) process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
+
+  it('propagates definition.workingDir as local.cwd to Agent.create', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const definition = {
+        kind: 'cursor' as const,
+        name: 'cursor-coder',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+        workingDir: '/resolved/worktree/path',
+      };
+      const context = {
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
+        toolRegistry: { getAllTools: () => [] },
+      };
+      const invocation = new CursorAgentInvocation(
+        definition as unknown as CursorAgentDefinition,
+        context as unknown as ConstructorParameters<
+          typeof CursorAgentInvocation
+        >[1],
+        { query: 'do the thing' },
+      );
+      const result = await invocation.execute(new AbortController().signal);
+      void result;
+
+      const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+      expect(sdk.Agent.create).toHaveBeenCalledTimes(1);
+      const createOptions = vi.mocked(sdk.Agent.create).mock.calls[0][0] as {
+        local: { cwd: string };
+      };
+      expect(createOptions.local.cwd).toBe('/resolved/worktree/path');
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
+    }
+  });
+
+  it('CONTROL: no workingDir falls back to config.getProjectRoot()', async () => {
+    const prior = process.env['CURSOR_API_KEY'];
+    process.env['CURSOR_API_KEY'] = 'test-key';
+    try {
+      const definition = {
+        kind: 'cursor' as const,
+        name: 'cursor-coder',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+      };
+      const context = {
+        config: {
+          getProjectRoot: () => '/tmp/project-root',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
+        toolRegistry: { getAllTools: () => [] },
+      };
+      const invocation = new CursorAgentInvocation(
+        definition as unknown as CursorAgentDefinition,
+        context as unknown as ConstructorParameters<
+          typeof CursorAgentInvocation
+        >[1],
+        { query: 'do the thing' },
+      );
+      await invocation.execute(new AbortController().signal);
+
+      const sdk = (await import('@cursor/sdk')) as unknown as CursorSdkModule;
+      expect(sdk.Agent.create).toHaveBeenCalledTimes(1);
+      const createOptions = vi.mocked(sdk.Agent.create).mock.calls[0][0] as {
+        local: { cwd: string };
+      };
+      expect(createOptions.local.cwd).toBe('/tmp/project-root');
+    } finally {
+      if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+      else process.env['CURSOR_API_KEY'] = prior;
     }
   });
 });

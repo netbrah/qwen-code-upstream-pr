@@ -1226,6 +1226,22 @@ assistant: Uses the ${ToolNames.AGENT} tool to launch the test-runner agent
       }
     }
 
+    if (params.isolation === 'worktree' && params.subagent_type) {
+      const cursorConfig = this.availableSubagents.find(
+        (s) =>
+          s.name.toLowerCase() === params.subagent_type!.toLowerCase() &&
+          s.externalInvocation?.kind === 'cursor',
+      );
+      if (cursorConfig) {
+        return (
+          'Parameter "isolation" is not supported for cursor agents ' +
+          '(the auto-create/teardown worktree lifecycle does not fit the ' +
+          'external SDK loop). Use "working_dir" to pin to an existing ' +
+          'worktree instead.'
+        );
+      }
+    }
+
     if (
       params.isolation === 'worktree' &&
       typeof params.working_dir === 'string' &&
@@ -2691,6 +2707,21 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
 
       const externalInvocation = subagentConfig.externalInvocation;
       if (externalInvocation?.kind === 'cursor') {
+        let resolvedWorkingDir: string | undefined;
+        if (this.params.working_dir !== undefined) {
+          const resolved = await resolveExternalWorktreeDir(
+            this.config,
+            this.params.working_dir,
+          );
+          if ('error' in resolved) {
+            return {
+              llmContent: resolved.error,
+              returnDisplay: this.currentDisplay,
+              error: { message: resolved.error },
+            };
+          }
+          resolvedWorkingDir = resolved.path;
+        }
         const definition: CursorAgentDefinition = {
           kind: 'cursor',
           name: subagentConfig.name,
@@ -2698,6 +2729,9 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           cursorModel: externalInvocation.cursorModel,
           trust: externalInvocation.trust,
           isolatedCwd: externalInvocation.isolatedCwd,
+          ...(resolvedWorkingDir !== undefined
+            ? { workingDir: resolvedWorkingDir }
+            : {}),
           ...(externalInvocation.cursorRun !== undefined
             ? { cursorRun: externalInvocation.cursorRun }
             : {}),

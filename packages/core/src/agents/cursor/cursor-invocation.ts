@@ -763,7 +763,9 @@ export class CursorAgentInvocation extends BaseToolInvocation<
       }
 
       let cwd: string;
-      if (this.definition.isolatedCwd) {
+      if (this.definition.workingDir) {
+        cwd = this.definition.workingDir;
+      } else if (this.definition.isolatedCwd) {
         tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cursor-'));
         cwd = tempDir;
       } else {

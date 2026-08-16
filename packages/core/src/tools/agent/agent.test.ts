@@ -86,16 +86,15 @@ const { mockCursorExecute, mockCursorConstructor } = vi.hoisted(() => {
     }>;
     params: { query: string };
   }
-  const mockCursorExecute =
-    vi.fn<
-      (
-        signal?: AbortSignal,
-        updateOutput?: (output: ToolResultDisplay) => void,
-      ) => Promise<{
-        llmContent: PartListUnion;
-        returnDisplay: ToolResultDisplay;
-      }>
-    >();
+  const mockCursorExecute = vi.fn<
+    (
+      signal?: AbortSignal,
+      updateOutput?: (output: ToolResultDisplay) => void,
+    ) => Promise<{
+      llmContent: PartListUnion;
+      returnDisplay: ToolResultDisplay;
+    }>
+  >();
   const mockCursorConstructor =
     vi.fn<
       (
@@ -1202,6 +1201,35 @@ describe('AgentTool', () => {
           isolation: 'worktree',
         }),
       ).toMatch(/fork/i);
+    });
+
+    it('rejects isolation:worktree for a cursor externalInvocation subagent', async () => {
+      const cursorConfig: SubagentConfig = {
+        name: 'cursor-coder',
+        description: 'Cursor SDK subagent',
+        systemPrompt: 'unused',
+        level: 'builtin',
+        externalInvocation: {
+          kind: 'cursor',
+          cursorModel: 'default',
+          trust: true,
+          isolatedCwd: false,
+        },
+      };
+      vi.mocked(mockSubagentManager.listSubagents).mockResolvedValue([
+        ...mockSubagents,
+        cursorConfig,
+      ]);
+      await agentTool.refreshSubagents();
+
+      const result = agentTool.validateToolParams({
+        ...validParams,
+        subagent_type: 'cursor-coder',
+        isolation: 'worktree',
+      });
+      expect(result).not.toBeNull();
+      expect(result!.toLowerCase()).toContain('isolation');
+      expect(result!.toLowerCase()).toContain('cursor');
     });
 
     it('accepts working_dir when subagent_type is set', () => {
@@ -7213,6 +7241,109 @@ describe('AgentTool', () => {
         expect(
           vi.mocked(mockSubagentManager.createAgentHeadless),
         ).toHaveBeenCalledTimes(1);
+        expect(mockCursorConstructor).not.toHaveBeenCalled();
+        expect(mockCursorExecute).not.toHaveBeenCalled();
+      } finally {
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    });
+
+    it('cursor dispatch propagates working_dir into CursorAgentDefinition.workingDir', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      const repo = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-wd-')),
+      );
+      try {
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+        execFileSync('git', ['config', 'user.email', 't@e.com'], {
+          cwd: repo,
+        });
+        execFileSync('git', ['config', 'user.name', 't'], { cwd: repo });
+        execFileSync('git', ['config', 'commit.gpgsign', 'false'], {
+          cwd: repo,
+        });
+        fs.writeFileSync(path.join(repo, 'README.md'), 'hi\n');
+        execFileSync('git', ['add', '.'], { cwd: repo });
+        execFileSync('git', ['commit', '-q', '-m', 'init', '--no-verify'], {
+          cwd: repo,
+        });
+
+        const wt = path.join(repo, '.qwen', 'tmp', 'cursor-wt');
+        fs.mkdirSync(path.dirname(wt), { recursive: true });
+        execFileSync('git', ['worktree', 'add', '-b', 'cursor-wt', wt], {
+          cwd: repo,
+        });
+
+        vi.mocked(config.getTargetDir).mockReturnValue(repo);
+        vi.mocked(config.getProjectRoot).mockReturnValue(repo);
+        vi.mocked(config.getCwd).mockReturnValue(repo);
+        vi.mocked(config.getWorkingDir).mockReturnValue(repo);
+
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor ran',
+          returnDisplay: 'cursor ran',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        vi.mocked(mockSubagentManager.listSubagents).mockResolvedValue([
+          ...mockSubagents,
+          cursorCoderConfig,
+        ]);
+        await agentTool.refreshSubagents();
+
+        const invocation = agentTool.build({
+          description: 'Run cursor in worktree',
+          prompt: 'Do cursor work',
+          subagent_type: 'cursor-coder',
+          working_dir: wt,
+          run_in_background: false,
+        });
+        await invocation.execute(new AbortController().signal);
+
+        expect(mockCursorConstructor).toHaveBeenCalledTimes(1);
+        const passedDefinition = vi.mocked(mockCursorConstructor).mock
+          .calls[0][0] as { workingDir?: string };
+        expect(passedDefinition.workingDir).toBe(wt);
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+        if (priorKey === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = priorKey;
+        vi.useFakeTimers();
+      }
+    }, 20000);
+
+    it('cursor dispatch rejects isolation:worktree', async () => {
+      vi.useRealTimers();
+      const priorKey = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        mockCursorExecute.mockResolvedValue({
+          llmContent: 'cursor ran',
+          returnDisplay: 'cursor ran',
+        });
+        vi.mocked(mockSubagentManager.loadSubagent).mockResolvedValue(
+          cursorCoderConfig,
+        );
+        vi.mocked(mockSubagentManager.listSubagents).mockResolvedValue([
+          ...mockSubagents,
+          cursorCoderConfig,
+        ]);
+        await agentTool.refreshSubagents();
+
+        expect(() =>
+          agentTool.build({
+            description: 'Run cursor isolated',
+            prompt: 'Do cursor work',
+            subagent_type: 'cursor-coder',
+            isolation: 'worktree',
+            run_in_background: false,
+          }),
+        ).toThrow(/isolation.*cursor|cursor.*isolation/i);
         expect(mockCursorConstructor).not.toHaveBeenCalled();
         expect(mockCursorExecute).not.toHaveBeenCalled();
       } finally {

@@ -186,6 +186,7 @@ export interface CursorAgentDefinition {
   cursorModel: string;
   trust: boolean;
   isolatedCwd: boolean;
+  workingDir?: string;
   loadProjectSettings?: boolean;
   cursorRun?: {
     sandbox?: { enabled: boolean };
