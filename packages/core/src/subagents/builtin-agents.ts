@@ -254,6 +254,22 @@ Guidelines:
 - IMPORTANT: At the end of your response, remind the user that they can ask Qwen Code to make further changes to the status line at any time.
 `,
     },
+    {
+      name: 'cursor-coder',
+      description:
+        'A Cursor-SDK-backed coding subagent that drives an external @cursor/sdk agent loop with the full Cursor tool surface (shell/read/edit/write/glob/grep/web) plus qwen first-party tools exposed in-process via the SDK native customTools API. Delegate self-contained coding tasks where you want Cursor loop to drive the change. Cursor runs with sandbox disabled so bridged qwen tools can execute; the trust:true boundary gate at delegation time is the operator consent signal. qwen policy does NOT gate individual tool calls inside the Cursor loop — the only in-loop guards are the agent own user-UID file permissions. Prefer this agent for read-mostly intel tasks over destructive write workflows. Requires CURSOR_API_KEY.',
+      systemPrompt:
+        'External invocation — cursor SDK drives the loop; this systemPrompt is unused by the SDK.',
+      tools: [],
+      runConfig: { max_time_minutes: 150, max_turns: 300 },
+      externalInvocation: {
+        kind: 'cursor',
+        cursorModel: 'default',
+        trust: true,
+        isolatedCwd: false,
+        cursorRun: { sandbox: { enabled: false }, settingSources: ['project'] },
+      },
+    },
   ];
 
   /**
@@ -261,12 +277,17 @@ Guidelines:
    * @returns Array of built-in subagent configurations
    */
   static getBuiltinAgents(): SubagentConfig[] {
-    return this.BUILTIN_AGENTS.map((agent) => ({
+    const all = this.BUILTIN_AGENTS.map((agent) => ({
       ...agent,
       level: 'builtin' as const,
       filePath: `<builtin:${agent.name}>`,
       isBuiltin: true,
     }));
+    // Elide cursor-coder when CURSOR_API_KEY is unset.
+    if (!process.env['CURSOR_API_KEY']) {
+      return all.filter((a) => a.name !== 'cursor-coder');
+    }
+    return all;
   }
 
   /**
@@ -275,6 +296,10 @@ Guidelines:
    * @returns Built-in agent configuration or null if not found
    */
   static getBuiltinAgent(name: string): SubagentConfig | null {
+    // Elide cursor-coder when CURSOR_API_KEY is unset.
+    if (name === 'cursor-coder' && !process.env['CURSOR_API_KEY']) {
+      return null;
+    }
     const lowerName = name.toLowerCase();
     const agent = this.BUILTIN_AGENTS.find(
       (a) => a.name.toLowerCase() === lowerName,
@@ -297,6 +322,10 @@ Guidelines:
    * @returns True if the name is a built-in agent
    */
   static isBuiltinAgent(name: string): boolean {
+    // Elide cursor-coder when CURSOR_API_KEY is unset (consistency with getBuiltinAgents/getBuiltinAgent/getBuiltinAgentNames).
+    if (name === 'cursor-coder' && !process.env['CURSOR_API_KEY']) {
+      return false;
+    }
     const lowerName = name.toLowerCase();
     return this.BUILTIN_AGENTS.some(
       (agent) => agent.name.toLowerCase() === lowerName,
@@ -308,6 +337,11 @@ Guidelines:
    * @returns Array of built-in agent names
    */
   static getBuiltinAgentNames(): string[] {
-    return this.BUILTIN_AGENTS.map((agent) => agent.name);
+    const names = this.BUILTIN_AGENTS.map((agent) => agent.name);
+    // Elide cursor-coder when CURSOR_API_KEY is unset.
+    if (!process.env['CURSOR_API_KEY']) {
+      return names.filter((n) => n !== 'cursor-coder');
+    }
+    return names;
   }
 }

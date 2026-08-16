@@ -150,4 +150,55 @@ describe('BuiltinAgentRegistry', () => {
       });
     });
   });
+
+  describe('cursor-coder builtin', () => {
+    it('includes cursor-coder when CURSOR_API_KEY is set', () => {
+      const prior = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        const agents = BuiltinAgentRegistry.getBuiltinAgents();
+        const cursorCoder = agents.find((a) => a.name === 'cursor-coder');
+        expect(cursorCoder).toBeDefined();
+        expect(cursorCoder?.externalInvocation?.kind).toBe('cursor');
+        expect(cursorCoder?.externalInvocation?.cursorModel).toBe('default');
+        expect(cursorCoder?.externalInvocation?.trust).toBe(true);
+      } finally {
+        if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = prior;
+      }
+    });
+
+    it('elides cursor-coder when CURSOR_API_KEY is unset', () => {
+      const prior = process.env['CURSOR_API_KEY'];
+      delete process.env['CURSOR_API_KEY'];
+      try {
+        const agents = BuiltinAgentRegistry.getBuiltinAgents();
+        const cursorCoder = agents.find((a) => a.name === 'cursor-coder');
+        expect(cursorCoder).toBeUndefined();
+      } finally {
+        if (prior !== undefined) process.env['CURSOR_API_KEY'] = prior;
+      }
+    });
+
+    it('isBuiltinAgent returns false for cursor-coder when CURSOR_API_KEY is unset', () => {
+      const prior = process.env['CURSOR_API_KEY'];
+      delete process.env['CURSOR_API_KEY'];
+      try {
+        expect(BuiltinAgentRegistry.isBuiltinAgent('cursor-coder')).toBe(false);
+      } finally {
+        if (prior !== undefined) process.env['CURSOR_API_KEY'] = prior;
+      }
+    });
+
+    it('isBuiltinAgent returns true for cursor-coder when CURSOR_API_KEY is set', () => {
+      const prior = process.env['CURSOR_API_KEY'];
+      process.env['CURSOR_API_KEY'] = 'test-key';
+      try {
+        expect(BuiltinAgentRegistry.isBuiltinAgent('cursor-coder')).toBe(true);
+      } finally {
+        if (prior === undefined) delete process.env['CURSOR_API_KEY'];
+        else process.env['CURSOR_API_KEY'] = prior;
+      }
+    });
+  });
 });
