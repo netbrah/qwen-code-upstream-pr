@@ -34,6 +34,7 @@ import type { TeamManager } from '../agents/team/TeamManager.js';
 import type { TeamContext } from '../agents/team/types.js';
 import type { FakeBackend } from '../agents/team/test-utils/fake-backend.js';
 import type { FakeAgent } from '../agents/team/test-utils/fake-agent.js';
+import { getTask } from '../agents/team/tasks.js';
 import { formatAgentId } from '../agents/team/teamHelpers.js';
 
 // ─── Mock Storage ──────────────────────────────────────────
@@ -344,6 +345,84 @@ describe('Team lifecycle E2E', () => {
     const noTeamDelete = await exec(deleteTool, {});
     expect(noTeamDelete.error).toBeDefined();
     expect(noTeamDelete.llmContent).toContain('No active team');
+  });
+
+  it('delivers direct leader messages to an idle teammate', async () => {
+    const config = makeConfig();
+    const createTool = new TeamCreateTool(config);
+    await exec(createTool, { team_name: 'direct-message' });
+
+    const backend = capturedBackend!;
+    const manager = config.getTeamManager()!;
+    const aliceId = formatAgentId('alice', 'direct-message');
+    backend.setScript(aliceId, {});
+    await manager.spawnTeammate({ name: 'alice', cwd: tmpDir });
+
+    const alice = backend.getAgent(aliceId) as FakeAgent;
+    const sendTool = new SendMessageTool(config);
+    const result = await exec(sendTool, {
+      to: 'alice',
+      message: 'Direct control message.',
+    });
+
+    expect(result.error).toBeUndefined();
+    await alice.waitForMessageCount(1);
+    expect(alice.getReceivedMessages()[0]).toContain('Direct control message.');
+
+    const deleteTool = new TeamDeleteTool(config);
+    const deleted = await exec(deleteTool, {});
+    expect(deleted.error).toBeUndefined();
+  });
+
+  it('dispatches a task prompt after a leader assigns an idle teammate', async () => {
+    const config = makeConfig();
+    const createTool = new TeamCreateTool(config);
+    await exec(createTool, { team_name: 'manual-assignment' });
+
+    const manager = config.getTeamManager()!;
+    try {
+      const taskCreateTool = new TaskCreateTool(config);
+      const taskResult = await exec(taskCreateTool, {
+        subject: 'Reserved task',
+        description: 'Deliver this assignment to Alice.',
+      });
+      const taskId = taskResult.llmContent.match(/Task #(\d+)/)![1];
+
+      const taskUpdateTool = new TaskUpdateTool(config);
+      const reservation = await exec(taskUpdateTool, {
+        taskId,
+        status: 'in_progress',
+        owner: 'reserved',
+      });
+      expect(reservation.error).toBeUndefined();
+      await expect(getTask('manual-assignment', taskId)).resolves.toMatchObject({
+        status: 'in_progress',
+        owner: 'reserved',
+      });
+
+      const backend = capturedBackend!;
+      const aliceId = formatAgentId('alice', 'manual-assignment');
+      backend.setScript(aliceId, {});
+      await manager.spawnTeammate({ name: 'alice', cwd: tmpDir });
+
+      const alice = backend.getAgent(aliceId) as FakeAgent;
+      expect(alice.getReceivedMessages()).toHaveLength(0);
+
+      const assignment = await exec(taskUpdateTool, {
+        taskId,
+        status: 'in_progress',
+        owner: 'alice',
+      });
+
+      expect(assignment.error).toBeUndefined();
+      await vi.waitFor(
+        () => expect(alice.getReceivedMessages()).toHaveLength(1),
+        { timeout: 1000 },
+      );
+      expect(alice.getReceivedMessages()[0]).toContain(`task #${taskId}`);
+    } finally {
+      await manager.cleanup();
+    }
   });
 
   it('prevents creating a second team', async () => {

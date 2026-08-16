@@ -77,9 +77,11 @@ The preceding combined-filter test commit is superseded by this correction. Pres
 - Consumes: leader `TaskUpdateTool` and `TeamManager.spawnTeammate()`.
 - Produces: a failing test that a documented leader assignment sends exactly one task prompt to the named idle teammate.
 
-- [ ] **Step 1: Write the failing lifecycle test**
+**Contract decision:** the current leader-facing instructions promise that setting an idle teammate as owner assigns the task to that teammate. This RED test pins that dispatch behavior. Replacing it with rejection is a separate product-contract change that must update the instructions and its regression coverage.
 
-Create a team, spawn idle `alice`, then call:
+- [x] **Step 1: Write the failing lifecycle test**
+
+Create and reserve the task before spawning Alice, so auto-claim cannot consume it. Spawn idle `alice`, then route the assignment through the leader tool:
 
 ```ts
 await exec(taskUpdateTool, {
@@ -89,13 +91,13 @@ await exec(taskUpdateTool, {
 });
 ```
 
-Assert that Alice receives one nonce-tagged task message naming `taskId`, and that no second automatic claim is delivered.
+Assert that Alice receives exactly one task prompt naming `taskId`. This isolates manual leader assignment from pending-task auto-claim.
 
-- [ ] **Step 2: Add a passing control**
+- [x] **Step 2: Add a passing control**
 
-Use the existing `SendMessageTool` path to send Alice a direct message and assert that the fake agent receives it. This demonstrates that the harness and idle delivery are live.
+Use the existing `SendMessageTool` path in a separate test to send Alice a direct message and assert that the fake agent receives it. This demonstrates that the harness and idle delivery are live before the RED case runs.
 
-- [ ] **Step 3: Run and record RED evidence**
+- [x] **Step 3: Run and record RED evidence**
 
 Run:
 
@@ -103,9 +105,9 @@ Run:
 cd packages/core && npx vitest run src/tools/team-lifecycle.test.ts
 ```
 
-Expected: FAIL because `task_update` persists `in_progress` ownership but does not enqueue a task prompt; the direct-message control passes.
+Observed: six controls pass, including direct leader delivery. The assignment test fails because `task_update` persists `in_progress` ownership but does not enqueue a task prompt.
 
-- [ ] **Step 4: Commit the RED test**
+- [ ] **Step 4: Review and commit the RED test**
 
 ```bash
 git add packages/core/src/tools/team-lifecycle.test.ts docs/design/2026-08-16-agent-team-reproduction-results.md
