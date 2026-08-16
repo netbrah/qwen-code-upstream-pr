@@ -62,9 +62,11 @@ packages/core/package.json      (EDIT) add @cursor/sdk dependency
 ## Task 1: Add `@cursor/sdk` dependency
 
 **Files:**
+
 - Modify: `packages/core/package.json`
 
 **Interfaces:**
+
 - Produces: `@cursor/sdk@^1.0.18` available as a lazy import in `packages/core`.
 
 - [ ] **Step 1: Add the dependency**
@@ -99,10 +101,12 @@ git commit -m "feat(core): add @cursor/sdk dependency for cursor-coder subagent"
 ## Task 2: Add `ExternalAgentInvocation` type + `externalInvocation` field to `SubagentConfig`
 
 **Files:**
+
 - Modify: `packages/core/src/subagents/types.ts`
 - Test: `packages/core/src/subagents/types.test.ts`
 
 **Interfaces:**
+
 - Produces: `ExternalAgentInvocation` interface exported from `subagents/types.ts`; `SubagentConfig.externalInvocation?: ExternalAgentInvocation` field.
 
 - [ ] **Step 1: Write the failing test**
@@ -237,10 +241,12 @@ git commit -m "feat(subagents): add ExternalAgentInvocation type for cursor-code
 ## Task 3: Add `cursor-coder` to `BuiltinAgentRegistry` (gated on `CURSOR_API_KEY`)
 
 **Files:**
+
 - Modify: `packages/core/src/subagents/builtin-agents.ts`
 - Modify: `packages/core/src/subagents/builtin-agents.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ExternalAgentInvocation` from Task 2.
 - Produces: `BuiltinAgentRegistry.getBuiltinAgents()` includes `cursor-coder` when `CURSOR_API_KEY` is set; elides it when unset.
 
@@ -384,10 +390,12 @@ git commit -m "feat(subagents): register cursor-coder builtin (gated on CURSOR_A
 ## Task 4: Port `cursor-custom-tools.ts` (buildCustomTools)
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/cursor-custom-tools.ts`
 - Create: `packages/core/src/agents/cursor/cursor-custom-tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: upstream's `ToolRegistry.getAllTools(): AnyDeclarativeTool[]`. Each tool has `name: string`, `description: string`, `schema: FunctionDeclaration` (with `parameters?: Schema`), and `buildAndExecute(params, signal, updateOutput?, shellExecutionConfig?): Promise<ToolResult>`.
 - Produces: `buildCustomTools({ registry, exposeBuiltins?, signal? }): Record<string, SDKCustomTool>` where `SDKCustomTool = { description: string; inputSchema: Record<string, SDKJsonValue>; execute: (args) => Promise<SDKCustomToolResult> }`.
 
@@ -401,7 +409,10 @@ import { buildCustomTools } from './cursor-custom-tools.js';
 
 // Minimal mock of an AnyDeclarativeTool. The real shape is wider; we only
 // access name/description/schema/buildAndExecute.
-function mockTool(name: string, opts?: { description?: string; schema?: unknown }) {
+function mockTool(
+  name: string,
+  opts?: { description?: string; schema?: unknown },
+) {
   return {
     name,
     displayName: name,
@@ -454,7 +465,10 @@ describe('buildCustomTools', () => {
 
   it('includes overlapping native tool names when exposeBuiltins is true', () => {
     const registry = mockRegistry([mockTool('read_file'), mockTool('my_tool')]);
-    const record = buildCustomTools({ registry: registry as any, exposeBuiltins: true });
+    const record = buildCustomTools({
+      registry: registry as any,
+      exposeBuiltins: true,
+    });
     expect(Object.keys(record).sort()).toEqual(['my_tool', 'read_file']);
   });
 
@@ -488,7 +502,10 @@ describe('buildCustomTools', () => {
     controller.abort();
     const tool = mockTool('my_tool');
     const registry = mockRegistry([tool]);
-    const record = buildCustomTools({ registry: registry as any, signal: controller.signal });
+    const record = buildCustomTools({
+      registry: registry as any,
+      signal: controller.signal,
+    });
     const result = await record['my_tool'].execute({});
     expect(result.isError).toBe(true);
     expect(tool.buildAndExecute).not.toHaveBeenCalled();
@@ -704,9 +721,11 @@ git commit -m "feat(cursor): port buildCustomTools — native SDK customTools ad
 ## Task 5: Port `types.ts` — structural SDK type mirrors
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/types.ts`
 
 **Interfaces:**
+
 - Produces: structural mirror types for `@cursor/sdk` messages (`CursorSDKMessage` union), `CursorRunResult`, `CursorSdkErrorLike`, `CursorAgentDefinition` (internal — not the registration type), `CursorModelParams`. These let the pure mapper and its tests run WITHOUT the SDK installed.
 
 - [ ] **Step 1: Create the types file**
@@ -761,11 +780,13 @@ git commit -m "feat(cursor): add structural SDK type mirrors"
 ## Task 6: Port the pure mapper functions (`mapCursorEvent`, `extractAssistantText`, `mapRunResultToOutput`, `applyActivity`)
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/cursor-invocation.ts` (mapper section only — the executor comes in Task 9)
 - Create: `packages/core/src/agents/cursor/cursor-invocation.test.ts` (mapper tests)
 - Create: `packages/core/src/agents/cursor/__fixtures__/cursor-sdk-stream-sample.jsonl`
 
 **Interfaces:**
+
 - Consumes: `CursorSDKMessage` union, `CursorRunResult` from `types.ts` (Task 5); upstream's `AgentTerminateMode` from `agents/runtime/agent-types.ts`.
 - Produces: `mapCursorEvent(event, agentName): SubagentActivityEvent[]`, `extractAssistantText(event): string`, `mapRunResultToOutput(result, buffer): OutputObject`, `applyActivity(recentActivity, event): SubagentActivityItem[]`, `resolveCursorApiKey(apiKey?): string | undefined`, `toCursorModelParams(params?): CursorModelParameterValue[] | undefined`, `resolveSettingSources(definition): string[]`.
 
@@ -806,7 +827,9 @@ describe('mapCursorEvent', () => {
         run_id: 'r',
         message: {
           role: 'assistant',
-          content: [{ type: 'tool_use', id: 'call1', name: 'shell', input: {} }],
+          content: [
+            { type: 'tool_use', id: 'call1', name: 'shell', input: {} },
+          ],
         },
       },
       'cursor-coder',
@@ -817,7 +840,14 @@ describe('mapCursorEvent', () => {
 
   it('maps a tool_call(running) to TOOL_CALL_START', () => {
     const events = mapCursorEvent(
-      { type: 'tool_call', agent_id: 'a', run_id: 'r', call_id: 'c1', name: 'read', status: 'running' },
+      {
+        type: 'tool_call',
+        agent_id: 'a',
+        run_id: 'r',
+        call_id: 'c1',
+        name: 'read',
+        status: 'running',
+      },
       'cursor-coder',
     );
     expect(events[0].type).toBe('TOOL_CALL_START');
@@ -825,7 +855,14 @@ describe('mapCursorEvent', () => {
 
   it('maps a tool_call(completed) to TOOL_CALL_END', () => {
     const events = mapCursorEvent(
-      { type: 'tool_call', agent_id: 'a', run_id: 'r', call_id: 'c1', name: 'read', status: 'completed' },
+      {
+        type: 'tool_call',
+        agent_id: 'a',
+        run_id: 'r',
+        call_id: 'c1',
+        name: 'read',
+        status: 'completed',
+      },
       'cursor-coder',
     );
     expect(events[0].type).toBe('TOOL_CALL_END');
@@ -833,7 +870,13 @@ describe('mapCursorEvent', () => {
 
   it('maps a status(ERROR) to an ERROR event', () => {
     const events = mapCursorEvent(
-      { type: 'status', agent_id: 'a', run_id: 'r', status: 'ERROR', message: 'boom' },
+      {
+        type: 'status',
+        agent_id: 'a',
+        run_id: 'r',
+        status: 'ERROR',
+        message: 'boom',
+      },
       'cursor-coder',
     );
     expect(events[0].type).toBe('ERROR');
@@ -854,7 +897,12 @@ describe('mapCursorEvent', () => {
   it('returns [] for system/user/task messages', () => {
     for (const msg of [
       { type: 'system', agent_id: 'a', run_id: 'r' },
-      { type: 'user', agent_id: 'a', run_id: 'r', message: { role: 'user', content: [] } },
+      {
+        type: 'user',
+        agent_id: 'a',
+        run_id: 'r',
+        message: { role: 'user', content: [] },
+      },
       { type: 'task', agent_id: 'a', run_id: 'r' },
     ]) {
       expect(mapCursorEvent(msg as any, 'cursor-coder')).toEqual([]);
@@ -862,7 +910,12 @@ describe('mapCursorEvent', () => {
   });
 
   it('CONTROL: empty thinking text yields no event (always-passing)', () => {
-    expect(mapCursorEvent({ type: 'thinking', agent_id: 'a', run_id: 'r', text: '' }, 'cursor-coder')).toEqual([]);
+    expect(
+      mapCursorEvent(
+        { type: 'thinking', agent_id: 'a', run_id: 'r', text: '' },
+        'cursor-coder',
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -884,30 +937,49 @@ describe('extractAssistantText', () => {
   });
 
   it('returns "" for non-assistant messages', () => {
-    expect(extractAssistantText({ type: 'thinking', agent_id: 'a', run_id: 'r', text: 'x' } as any)).toBe('');
+    expect(
+      extractAssistantText({
+        type: 'thinking',
+        agent_id: 'a',
+        run_id: 'r',
+        text: 'x',
+      } as any),
+    ).toBe('');
   });
 });
 
 describe('mapRunResultToOutput', () => {
   it('finished → GOAL', () => {
-    const out = mapRunResultToOutput({ id: 'r', status: 'finished', result: 'done' }, '');
+    const out = mapRunResultToOutput(
+      { id: 'r', status: 'finished', result: 'done' },
+      '',
+    );
     expect(out.terminate_reason).toBe(AgentTerminateMode.GOAL);
     expect(out.result).toBe('done');
   });
 
   it('cancelled → ABORTED', () => {
-    const out = mapRunResultToOutput({ id: 'r', status: 'cancelled' }, 'partial buffer');
+    const out = mapRunResultToOutput(
+      { id: 'r', status: 'cancelled' },
+      'partial buffer',
+    );
     expect(out.terminate_reason).toBe(AgentTerminateMode.ABORTED);
   });
 
   it('error with result → ERROR + result', () => {
-    const out = mapRunResultToOutput({ id: 'r', status: 'error', result: 'SDK failed' }, '');
+    const out = mapRunResultToOutput(
+      { id: 'r', status: 'error', result: 'SDK failed' },
+      '',
+    );
     expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
     expect(out.result).toBe('SDK failed');
   });
 
   it('error without result → ERROR + "no machine-readable reason" marker', () => {
-    const out = mapRunResultToOutput({ id: 'r', status: 'error' }, 'last assistant text');
+    const out = mapRunResultToOutput(
+      { id: 'r', status: 'error' },
+      'last assistant text',
+    );
     expect(out.terminate_reason).toBe(AgentTerminateMode.ERROR);
     expect(out.result).toContain('no result');
     expect(out.result).toContain('Last assistant text');
@@ -958,7 +1030,11 @@ describe('toCursorModelParams', () => {
   });
 
   it('emits reasoning/effort/thinking', () => {
-    const out = toCursorModelParams({ reasoning: 'high', effort: 'medium', thinking: true });
+    const out = toCursorModelParams({
+      reasoning: 'high',
+      effort: 'medium',
+      thinking: true,
+    });
     expect(out).toEqual([
       { id: 'reasoning', value: 'high' },
       { id: 'effort', value: 'medium' },
@@ -975,15 +1051,30 @@ describe('toCursorModelParams', () => {
 describe('applyActivity', () => {
   it('merges consecutive THOUGHT_CHUNKs into one running thought', () => {
     let activity: any[] = [];
-    activity = applyActivity(activity, { isSubagentActivityEvent: true, agentName: 'a', type: 'THOUGHT_CHUNK', data: { text: 'foo' } });
-    activity = applyActivity(activity, { isSubagentActivityEvent: true, agentName: 'a', type: 'THOUGHT_CHUNK', data: { text: 'bar' } });
+    activity = applyActivity(activity, {
+      isSubagentActivityEvent: true,
+      agentName: 'a',
+      type: 'THOUGHT_CHUNK',
+      data: { text: 'foo' },
+    });
+    activity = applyActivity(activity, {
+      isSubagentActivityEvent: true,
+      agentName: 'a',
+      type: 'THOUGHT_CHUNK',
+      data: { text: 'bar' },
+    });
     expect(activity).toHaveLength(1);
     expect(activity[0].content).toBe('foobar');
   });
 
   it('dedupes TOOL_CALL_START by callId', () => {
     let activity: any[] = [];
-    const ev = { isSubagentActivityEvent: true, agentName: 'a', type: 'TOOL_CALL_START', data: { callId: 'c1', name: 'shell', args: {} } };
+    const ev = {
+      isSubagentActivityEvent: true,
+      agentName: 'a',
+      type: 'TOOL_CALL_START',
+      data: { callId: 'c1', name: 'shell', args: {} },
+    };
     activity = applyActivity(activity, ev);
     activity = applyActivity(activity, ev);
     expect(activity.filter((i) => i.type === 'tool_call')).toHaveLength(1);
@@ -991,8 +1082,18 @@ describe('applyActivity', () => {
 
   it('marks a running tool_call as completed on TOOL_CALL_END', () => {
     let activity: any[] = [];
-    activity = applyActivity(activity, { isSubagentActivityEvent: true, agentName: 'a', type: 'TOOL_CALL_START', data: { callId: 'c1', name: 'shell', args: {} } });
-    activity = applyActivity(activity, { isSubagentActivityEvent: true, agentName: 'a', type: 'TOOL_CALL_END', data: { callId: 'c1', isError: false } });
+    activity = applyActivity(activity, {
+      isSubagentActivityEvent: true,
+      agentName: 'a',
+      type: 'TOOL_CALL_START',
+      data: { callId: 'c1', name: 'shell', args: {} },
+    });
+    activity = applyActivity(activity, {
+      isSubagentActivityEvent: true,
+      agentName: 'a',
+      type: 'TOOL_CALL_END',
+      data: { callId: 'c1', isError: false },
+    });
     expect(activity[0].status).toBe('completed');
   });
 });
@@ -1006,6 +1107,7 @@ Expected: FAIL — module not found / functions not exported.
 - [ ] **Step 3: Implement the mapper functions**
 
 Create `packages/core/src/agents/cursor/cursor-invocation.ts` with ONLY the pure functions (the executor class comes in Task 9). Port from apex-ontap `cursor-invocation.ts`:
+
 - `mapCursorEvent` (including the `PERMISSION_GATE` handling for `request` and `interaction_query` messages)
 - `extractAssistantText`
 - `mapRunResultToOutput`
@@ -1081,10 +1183,12 @@ git commit -m "feat(cursor): port pure mapper functions (mapCursorEvent, applyAc
 ## Task 7: Port `cursor-sdk-output-suppression.ts`
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/cursor-sdk-output-suppression.ts`
 - Create: `packages/core/src/agents/cursor/cursor-sdk-output-suppression.test.ts`
 
 **Interfaces:**
+
 - Produces: `CursorSdkOutputSuppressor` class with `install()`, `uninstall()`, `runStartupScope(fn)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1163,17 +1267,23 @@ git commit -m "feat(cursor): port CursorSdkOutputSuppressor"
 ## Task 8: Port `run-timeout.ts` (minimal `withRunTimeout`)
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/run-timeout.ts`
 - Create: `packages/core/src/agents/cursor/run-timeout.test.ts`
 
 **Interfaces:**
+
 - Produces: `withRunTimeout(fn, maxMinutes?, onTimeout?): Promise<T>`, `CliRunTimeoutError` class, `isCliRunTimeoutError(e): boolean`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { withRunTimeout, CliRunTimeoutError, isCliRunTimeoutError } from './run-timeout.js';
+import {
+  withRunTimeout,
+  CliRunTimeoutError,
+  isCliRunTimeoutError,
+} from './run-timeout.js';
 
 describe('withRunTimeout', () => {
   it('returns fn result when fn completes before timeout', async () => {
@@ -1289,15 +1399,18 @@ git commit -m "feat(cursor): port withRunTimeout helper"
 ## Task 9: Port `cursor-mcp-timeout-override.ts`
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/cursor-mcp-timeout-override.ts`
 - Create: `packages/core/src/agents/cursor/cursor-mcp-timeout-override.test.ts`
 
 **Interfaces:**
+
 - Produces: `installCursorMcpToolTimeoutOverride()`, `restoreCursorMcpToolTimeoutOverride()`.
 
 - [ ] **Step 1: Write the failing test**
 
 Port the test from apex-ontap `cursor-mcp-timeout-override.test.ts`. Key cases:
+
 - `install()` monkeypatches setTimeout (or the SDK's MCP timeout)
 - `restore()` reverts
 - default-timeout detection
@@ -1354,10 +1467,12 @@ git commit -m "feat(cursor): port MCP timeout override"
 ## Task 10: Port `CursorAgentInvocation` (the executor)
 
 **Files:**
+
 - Modify: `packages/core/src/agents/cursor/cursor-invocation.ts` (add the class — the pure functions are already there from Task 6)
 - Modify: `packages/core/src/agents/cursor/cursor-invocation.test.ts` (add executor tests — fixture replay)
 
 **Interfaces:**
+
 - Consumes: `BaseToolInvocation` from `../../tools/tools.js`; `CursorAgentDefinition`, `CursorSDKMessage`, `CursorRunResult` from `./types.js`; `buildCustomTools` from `./cursor-custom-tools.js`; `CursorSdkOutputSuppressor` from `./cursor-sdk-output-suppression.js`; `withRunTimeout` from `./run-timeout.js`; upstream `Config` + `ToolRegistry`.
 - Produces: `CursorAgentInvocation extends BaseToolInvocation<{ query: string }, ToolResult>` with `execute(signal, updateOutput?): Promise<ToolResult>`.
 
@@ -1375,16 +1490,33 @@ vi.mock('@cursor/sdk', () => {
     id: 'run-1',
     stream: async function* () {
       // Yield a minimal recorded stream: thinking → assistant text → tool_call → status(finished)
-      yield { type: 'thinking', agent_id: 'a', run_id: 'run-1', text: 'Planning...' };
+      yield {
+        type: 'thinking',
+        agent_id: 'a',
+        run_id: 'run-1',
+        text: 'Planning...',
+      };
       yield {
         type: 'assistant',
         agent_id: 'a',
         run_id: 'run-1',
-        message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
       };
-      yield { type: 'status', agent_id: 'a', run_id: 'run-1', status: 'FINISHED' };
+      yield {
+        type: 'status',
+        agent_id: 'a',
+        run_id: 'run-1',
+        status: 'FINISHED',
+      };
     },
-    wait: async () => ({ id: 'run-1', status: 'finished', result: 'Task complete.' }),
+    wait: async () => ({
+      id: 'run-1',
+      status: 'finished',
+      result: 'Task complete.',
+    }),
     cancel: async () => {},
     supports: (cap: string) => cap === 'cancel',
   };
@@ -1419,7 +1551,10 @@ describe('CursorAgentInvocation.execute', () => {
         runConfig: { maxTimeMinutes: 1, maxTurns: 10 },
       };
       const context = {
-        config: { getProjectRoot: () => '/tmp/test', getToolRegistry: () => ({ getAllTools: () => [] }) },
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
       };
       const invocation = new CursorAgentInvocation(
         definition as any,
@@ -1447,7 +1582,10 @@ describe('CursorAgentInvocation.execute', () => {
         isolatedCwd: false,
       };
       const context = {
-        config: { getProjectRoot: () => '/tmp/test', getToolRegistry: () => ({ getAllTools: () => [] }) },
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
       };
       const invocation = new CursorAgentInvocation(
         definition as any,
@@ -1474,7 +1612,10 @@ describe('CursorAgentInvocation.execute', () => {
         isolatedCwd: false,
       };
       const context = {
-        config: { getProjectRoot: () => '/tmp/test', getToolRegistry: () => ({ getAllTools: () => [] }) },
+        config: {
+          getProjectRoot: () => '/tmp/test',
+          getToolRegistry: () => ({ getAllTools: () => [] }),
+        },
       };
       const invocation = new CursorAgentInvocation(
         definition as any,
@@ -1511,7 +1652,10 @@ export class CursorAgentInvocation extends BaseToolInvocation<
 
   constructor(
     private readonly definition: CursorAgentDefinition,
-    private readonly context: { config: Config; toolRegistry: CursorToolRegistryLike },
+    private readonly context: {
+      config: Config;
+      toolRegistry: CursorToolRegistryLike;
+    },
     params: { query: string },
   ) {
     super(params);
@@ -1535,6 +1679,7 @@ export class CursorAgentInvocation extends BaseToolInvocation<
 **`mapRunResultToOutput` + final `ToolResult`:** port the final assembly. Return `{ llmContent: [{ text: ... }], returnDisplay: <ToolResultDisplay> }`. For `returnDisplay`, use a `string` or `AgentResultDisplay` — check which fits upstream's `ToolResultDisplay` union. If neither fits cleanly, use a `string` summary.
 
 **Strip (do NOT port):**
+
 - `CursorToolBridgeRegistry` / `toolBridge.enabled` branch (customTools is the only path)
 - `ensureCursorH1Config`
 - `APEX_CURSOR_HTTPS_PROXY` env scoping / `restoreProxyEnv`
@@ -1578,6 +1723,7 @@ git commit -m "feat(cursor): port CursorAgentInvocation executor (customTools pa
 ## Task 11: Add the `index.ts` barrel + create the fixture file
 
 **Files:**
+
 - Create: `packages/core/src/agents/cursor/index.ts`
 - Create: `packages/core/src/agents/cursor/__fixtures__/cursor-sdk-stream-sample.jsonl`
 
@@ -1600,7 +1746,11 @@ export {
   installCursorMcpToolTimeoutOverride,
   restoreCursorMcpToolTimeoutOverride,
 } from './cursor-mcp-timeout-override.js';
-export { withRunTimeout, CliRunTimeoutError, isCliRunTimeoutError } from './run-timeout.js';
+export {
+  withRunTimeout,
+  CliRunTimeoutError,
+  isCliRunTimeoutError,
+} from './run-timeout.js';
 export type {
   CursorAgentDefinition,
   CursorModelParams,
@@ -1630,10 +1780,12 @@ git commit -m "feat(cursor): add index barrel + stream fixture"
 ## Task 12: Add the dispatch hook in `tools/agent/agent.ts`
 
 **Files:**
+
 - Modify: `packages/core/src/tools/agent/agent.ts`
 - Modify: `packages/core/src/tools/agent/agent.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CursorAgentInvocation` from `../../agents/cursor/index.js`; `ExternalAgentInvocation` from `../../subagents/types.js`.
 - Produces: when a resolved `SubagentConfig` has `externalInvocation?.kind === 'cursor'`, the `agent` tool constructs `CursorAgentInvocation` and runs it via `execute(signal, updateOutput)` instead of spawning `AgentHeadless`.
 
@@ -1652,7 +1804,12 @@ describe('AgentTool dispatch hook — externalInvocation', () => {
       returnDisplay: 'cursor ran',
     }));
     vi.mock('../../agents/cursor/index.js', () => ({
-      CursorAgentInvocation: vi.fn(function (this: any, definition: any, context: any, params: any) {
+      CursorAgentInvocation: vi.fn(function (
+        this: any,
+        definition: any,
+        context: any,
+        params: any,
+      ) {
         this.params = params;
         this.execute = mockExecute;
       }),
@@ -1696,7 +1853,9 @@ In `packages/core/src/tools/agent/agent.ts`, find the dispatch path where `Subag
 // After resolving the SubagentConfig for the requested subagent_type:
 const externalInvocation = resolvedConfig.externalInvocation;
 if (externalInvocation?.kind === 'cursor') {
-  const { CursorAgentInvocation } = await import('../../agents/cursor/index.js');
+  const { CursorAgentInvocation } = await import(
+    '../../agents/cursor/index.js'
+  );
   const definition: CursorAgentDefinition = {
     kind: 'cursor',
     name: resolvedConfig.name,
@@ -1784,6 +1943,7 @@ Expected: all PASS (including the new dispatch-hook test).
 - [ ] **Step 7: Commit (if any fixups were needed)**
 
 If Steps 1-6 required fixups, commit them:
+
 ```bash
 git add -A
 git commit -m "fix(cursor): build/typecheck/lint sweep fixups"
@@ -1802,9 +1962,10 @@ git diff dogfood-2026-08-12...HEAD
 ```
 
 Read every changed file. For each:
+
 - Does it match the spec's intent?
-- Is there fork-specific coupling (apex, spectre, APEX_*) that should be rebranded or dropped?
-- Are there comments that narrate *what* instead of *why*? Remove the *what* comments.
+- Is there fork-specific coupling (apex, spectre, APEX\_\*) that should be rebranded or dropped?
+- Are there comments that narrate _what_ instead of _why_? Remove the _what_ comments.
 - Are there any `TODO` / `TBD` / placeholder strings left? Fix them.
 
 - [ ] **Step 2: Verify each green test isn't asserting the wrong thing**
@@ -1827,6 +1988,7 @@ git commit -m "chore(cursor): self-audit fixups"
 ## Task 15: PR preparation
 
 **Files:**
+
 - Create or update: PR description (use `.github/pull_request_template.md`)
 
 - [ ] **Step 1: Verify the worktree branch is clean**
@@ -1845,6 +2007,7 @@ Run: `npm run preflight` (if time permits — it's the full clean → install �
 - [ ] **Step 3: Draft the PR description**
 
 Follow `.github/pull_request_template.md`. Key points for the description:
+
 - **Motivation:** Cursor-SDK-backed coding subagent; native `customTools` tool bridging; default-off (`CURSOR_API_KEY`).
 - **Changes:** New `packages/core/src/agents/cursor/` module; `externalInvocation` discriminant on `SubagentConfig`; `cursor-coder` in `BuiltinAgentRegistry`; dispatch hook in `agent.ts`.
 - **Reviewer Test Plan:** set `CURSOR_API_KEY`, run `qwen`, verify `cursor-coder` appears in `/agents`, delegate a task via the `agent` tool, verify the cursor SDK loop runs and returns a result.
@@ -1858,25 +2021,26 @@ Present the branch for review. The user decides when to push / create the PR.
 
 ## Summary
 
-| Task | Gate | RED-before-GREEN | CONTROL test |
-|---|---|---|---|
-| 1 | Dependency | — | — |
-| 2 | Types | ✅ | — |
-| 3 | Registration | ✅ | — |
-| 4 | customTools | ✅ | empty-registry |
-| 5 | Types (SDK mirrors) | — | — |
-| 6 | Pure mapper | ✅ | empty-thinking-text |
-| 7 | Output suppression | ✅ | runStartupScope-returns-result |
-| 8 | Run timeout | ✅ | zero-duration-resolves |
-| 9 | MCP timeout override | ✅ | install-restore-round-trips |
-| 10 | Executor | ✅ | (covered by mapper CONTROLs) |
-| 11 | Barrel + fixture | — | — |
-| 12 | Dispatch hook | ✅ | non-external-goes-to-AgentHeadless |
-| 13 | Build sweep | — | — |
-| 14 | Self-audit | — | — |
-| 15 | PR prep | — | — |
+| Task | Gate                 | RED-before-GREEN | CONTROL test                       |
+| ---- | -------------------- | ---------------- | ---------------------------------- |
+| 1    | Dependency           | —                | —                                  |
+| 2    | Types                | ✅               | —                                  |
+| 3    | Registration         | ✅               | —                                  |
+| 4    | customTools          | ✅               | empty-registry                     |
+| 5    | Types (SDK mirrors)  | —                | —                                  |
+| 6    | Pure mapper          | ✅               | empty-thinking-text                |
+| 7    | Output suppression   | ✅               | runStartupScope-returns-result     |
+| 8    | Run timeout          | ✅               | zero-duration-resolves             |
+| 9    | MCP timeout override | ✅               | install-restore-round-trips        |
+| 10   | Executor             | ✅               | (covered by mapper CONTROLs)       |
+| 11   | Barrel + fixture     | —                | —                                  |
+| 12   | Dispatch hook        | ✅               | non-external-goes-to-AgentHeadless |
+| 13   | Build sweep          | —                | —                                  |
+| 14   | Self-audit           | —                | —                                  |
+| 15   | PR prep              | —                | —                                  |
 
 **Spec coverage check:** every section of the spec maps to a task:
+
 - §3 Architecture → Tasks 2, 3, 12
 - §4 Source→target mapping → Tasks 4, 6, 7, 8, 9, 10
 - §5 Types → Task 2, 5
@@ -1885,3 +2049,163 @@ Present the branch for review. The user decides when to push / create the PR.
 - §8 Dependencies → Task 1
 - §9 Testing → all tasks (TDD gates)
 - §10 Dropped → confirmed dropped (no tasks create bridge/abort/diagnostics/runtime-context)
+
+---
+
+## Deferred code-review follow-ups (2026-08-16)
+
+A `cursor-coder` review of `09af6e243f..ab057d5440` returned
+**REQUEST CHANGES**. The two blockers below were independently re-read against
+`ab057d5440`; the remaining items are reviewer-reported suggestions that still
+need technical triage before implementation.
+
+### Confirmed blockers
+
+#### P0: Honor or reject `working_dir` and `isolation`
+
+**Code:**
+
+- `packages/core/src/tools/agent/agent.ts:2692-2735`
+- `packages/core/src/agents/cursor/cursor-invocation.ts:757-771`
+
+The `externalInvocation.kind === 'cursor'` branch returns before the ordinary
+Agent path resolves `working_dir` or provisions `isolation: 'worktree'`.
+`CursorAgentInvocation` therefore uses a temporary directory only when its
+builtin `isolatedCwd` flag is true; otherwise it uses
+`config.getProjectRoot()`. A caller can pass a parameter that validates but
+Cursor native shell/edit/write tools still operate in the parent project root.
+
+Before implementation, choose one explicit contract:
+
+1. resolve and propagate the requested worktree cwd into
+   `CursorAgentInvocation`; or
+2. reject `working_dir` and `isolation` for external Cursor agents during
+   parameter validation.
+
+The first contract is required if pinned Cursor review/coding workflows are a
+supported use case.
+
+**Required RED coverage:**
+
+- `working_dir` changes the cwd passed to Cursor SDK `Agent.create()`;
+- `isolation: 'worktree'` either provisions and passes the worktree cwd or is
+  rejected with the documented error before SDK execution;
+- CONTROL: a Cursor call without either parameter continues to use the project
+  root.
+
+#### P0: Make process-global SDK patches safe for overlapping runs
+
+**Code:**
+
+- `packages/core/src/agents/cursor/cursor-mcp-timeout-override.ts:143-166`
+- `packages/core/src/agents/cursor/cursor-sdk-output-suppression.ts:66-118`
+- `packages/core/src/agents/cursor/cursor-invocation.ts:811-812,1022-1026`
+
+Every Cursor invocation patches `globalThis.setTimeout`,
+`process.stdout.write`, and `process.stderr.write`. The timeout override keeps
+one global original function, while each output suppressor instance captures
+and restores whatever stream writer existed at install time. With overlapping
+runs, the first run to finish can restore globals while the second is active;
+the second suppressor can later restore a stale wrapper.
+
+Use one shared ownership model for each process-global patch: reference-counted
+install/restore or serialization at the Cursor invocation boundary. Restoration
+must occur only after the last owner exits, including thrown startup, abort,
+and timeout paths.
+
+**Required RED coverage:**
+
+- install A, install B, restore A: B's behavior remains active;
+- restore B: the exact original global functions are restored;
+- repeat with reverse completion order;
+- thrown startup and aborted run release only their own ownership;
+- CONTROL: a single install/restore round trip remains unchanged.
+
+#### P0: `run_in_background` is bypassed by the early external dispatch return
+
+**Code:**
+
+- `packages/core/src/tools/agent/agent.ts:2692-2735`
+
+The `externalInvocation.kind === 'cursor'` branch returns before the
+`backgroundRequested` computation and the `BackgroundTaskRegistry` code below
+it. `CursorAgentInvocation.execute()` is always awaited inline and its result
+returned directly. A caller can set `run_in_background: true`, the parameter
+validates, but the cursor agent runs in the foreground anyway — no
+background-task record is created, nothing appears in the standalone subagent
+UI while the Cursor loop runs, and the completion-notification path never
+fires. The team case only exposes the outer named teammate; the inner Cursor
+execution is never registered as a background task.
+
+Before implementation, choose one explicit contract:
+
+1. support `run_in_background: true` by routing the cursor invocation through
+   the existing background-task registry (register, spawn, return a "started"
+   result, fire completion notification on finish); or
+2. reject `run_in_background: true` for external Cursor agents during
+   parameter validation with a documented error.
+
+The first contract is required if background cursor-coder delegation is a
+supported use case (the operator asked for cursor-coder to appear as a
+background tab).
+
+**Required RED coverage:**
+
+- `run_in_background: true` with a cursor externalInvocation either creates a
+  background-task record (contract 1) or is rejected with the documented error
+  before SDK execution (contract 2);
+- `run_in_background: false` (or unset) with a cursor externalInvocation runs
+  inline and returns the result (CONTROL: existing behavior preserved);
+- under contract 1, the background task appears in the registry while running
+  and fires the completion notification on finish.
+
+### Suggestions requiring triage
+
+These are not blockers until verified against intended product scope:
+
+1. `extractSdkInteractionResponseApproval()` treats
+   `{ approved: false }` as approved (`cursor-invocation.ts:185-191`).
+2. The external dispatch copies `runConfig.max_turns` but not the legacy
+   top-level `maxTurns` fallback used by `AgentHeadless`.
+3. `CursorAgentInvocation.getConfirmationDetails()` is not called through the
+   Agent dispatch path; confirm whether generic Agent approval is the intended
+   trust boundary.
+4. Current `sanitize*` helpers do not redact tool arguments or errors; determine
+   which Cursor activity fields can contain credentials before changing display
+   behavior.
+5. Add the design's missing fixture-replay lifecycle coverage for abort,
+   timeout, SDK startup failure, and `finally` restoration.
+6. `externalInvocation` is not parsed from `.qwen/agents/*.md` frontmatter;
+   confirm that it is intentionally builtin-only before exposing a new trust
+   surface.
+7. The plan mentioned `useHttp1ForAgent`, but SDK create options omit it;
+   confirm whether direct upstream egress makes this intentionally out of
+   scope.
+
+### Reviewer verification evidence
+
+The reviewer reported:
+
+```text
+Cursor-focused tests: 75/75 passed
+External dispatch-hook tests: 2/2 passed
+packages/core TypeScript check: passed
+```
+
+These checks do not exercise worktree cwd propagation or overlapping Cursor
+invocations, so they do not discharge either confirmed blocker.
+
+### Resume protocol
+
+When this work resumes:
+
+1. use `superpowers:subagent-driven-development` to execute independent fixes;
+2. use true RED-before-GREEN TDD for each behavior, capturing the actual failing
+   assertion before production edits;
+3. include at least one deliberately-passing CONTROL test per fix;
+4. stash the implementation and rerun each new test to prove the RED is caused
+   by the missing fix, then restore and capture GREEN;
+5. run the targeted Cursor tests, the Agent dispatch tests, build, typecheck,
+   and lint;
+6. repeat the code review against the updated commit range before declaring the
+   port ready.
