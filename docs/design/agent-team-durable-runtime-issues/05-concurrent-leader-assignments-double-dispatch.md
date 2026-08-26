@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: Deterministic source interleaving; barrier test required
+> Evidence: Source-supported interleaving; no executed concurrent reproduction
+>
+> Readiness: Hold until a barrier-controlled test demonstrates duplicate dispatch
 
 ## Suggested title
 
@@ -70,11 +72,9 @@ snapshot. Release both and assert:
 The stronger contract is preferable because it gives the losing leader call
 an explicit conflict result.
 
-## Acceptance criteria
+## Invariant to verify
 
-- Assignment compares expected owner, status, and version under the task lock.
 - Only the committed transition produces a dispatch.
-- The losing invocation returns a conflict that includes current task state.
 - Concurrent assignment cannot cause two teammates to execute one task.
 - Single-assignment behavior remains unchanged.
 
@@ -85,3 +85,25 @@ an explicit conflict result.
 - [ ] Search for duplicate assignment-race reports.
 - [ ] Keep the issue scoped to conditional assignment, not a full task-store
       redesign.
+
+<details>
+<summary>中文草稿（尚未通过并发测试复现）</summary>
+
+## 发生了什么？
+
+源码中存在一种可能的交错：两个 leader 侧 `task_update` 调用先读取同一个
+pending、未分配快照，之后分别写入不同 owner 并各自 dispatch。当前尚未
+执行 barrier 控制测试，因此不能声称双重 dispatch 已发生。
+
+## 预期行为是什么？
+
+对于同一个 task 的并发分配，只有最终提交的分配可以触发 dispatch。不能让
+两个 teammate 因同一次逻辑分配而并行执行同一 task。
+
+## 提交门槛
+
+测试必须让两个 invocation 在任一写入前读取相同快照，并断言收到 prompt
+的 teammate 数量及最终持久化 owner。公开报告不应预先规定 CAS、version
+字段或锁实现。
+
+</details>

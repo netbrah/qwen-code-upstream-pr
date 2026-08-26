@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: Deterministic cross-session check/delete race
+> Evidence: Source-supported cross-session interleaving; not reproduced
+>
+> Readiness: Hold until a controlled two-creator test deletes the later generation
 
 ## Suggested title
 
@@ -60,11 +62,8 @@ allow A to create, then allow B to continue. Assert:
 - the winner's session or generation token remains on disk;
 - the loser cannot delete the winner's tasks or mailbox.
 
-## Acceptance criteria
+## Invariant to verify
 
-- Reclaim is protected by a cross-session lifecycle lock or atomic namespace
-  handoff.
-- Deletion validates an ownership or generation token.
 - A stale reclaim decision cannot delete a later generation.
 - The test runs on both POSIX and Windows filesystem implementations.
 
@@ -74,3 +73,25 @@ allow A to create, then allow B to continue. Assert:
 - [ ] Choose a minimally prescriptive fix description.
 - [ ] Search for stale-team and team-create race duplicates.
 - [ ] Include the exact commit used for reproduction.
+
+<details>
+<summary>中文草稿（尚未通过双创建者测试复现）</summary>
+
+## 发生了什么？
+
+源码允许两个创建者先后检查同一个 stale team，并分别继续按 team 名称执行
+删除。理论上，创建者 A 可以先创建新 generation，随后创建者 B 的旧删除
+决定可能删除这个新 generation。该交错尚未在测试中执行。
+
+## 预期行为是什么？
+
+基于 stale generation 作出的 reclaim 决定不能删除之后创建的 live
+generation。并发创建结束后，应保留唯一成功创建者的配置、tasks 和 mailbox。
+
+## 提交门槛
+
+需要一个有明确 barrier 的双创建者集成测试，记录每次读取、删除和创建的
+顺序。公开报告只陈述生命周期不变量，不规定 lock 或 generation token 的
+具体实现。
+
+</details>

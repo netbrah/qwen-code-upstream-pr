@@ -4,9 +4,9 @@
 >
 > Classification: Feature request
 >
-> Evidence: Source-confirmed model-visible discovery gap
+> Evidence: Proposed product gap; current documentation may already provide a persisted roster
 >
-> Filing gate: Decide whether to file separately or extend #9449
+> Filing gate: First verify that the documented team configuration is unavailable or insufficient
 
 ## Suggested title
 
@@ -50,7 +50,7 @@ Peer-to-peer delivery already exists. `TeamManager.sendMessage()` can route a
 message from one teammate to another by canonical member name, and
 `send_message` documents `to` as the team destination field.
 
-However, the teammate system prompt provides only:
+The teammate system prompt provides only:
 
 - the teammate's own name;
 - the team name;
@@ -70,9 +70,11 @@ The available tools do not close the gap:
 - `list_agents` intentionally lists only ordinary background subagents and
   explicitly excludes named Agent Team teammates.
 
-As a result, a teammate can use peer messaging only if another prompt or task
-happens to disclose the exact peer name. The transport supports peer
-communication, but its address book is not model-visible.
+The repository also documents a persisted team configuration. Before filing,
+verify whether teammates can read that configuration through their existing
+tools and whether it is intended to be the authoritative address book. If it
+is available, this proposal should be narrowed to discoverability or prompt
+guidance rather than claiming that no roster exists.
 
 ## Example
 
@@ -177,8 +179,9 @@ accepted scope is primarily leader observability. This draft concerns
 teammate-visible peer discovery and canonical addressing. The implementation
 may share a projection, but the user stories and access contexts differ.
 
-No open or closed issue matching `agent team roster`, `teammate discovery`,
-or peer-name discovery was found on 2026-08-25.
+Searches run on 2026-08-25 included `agent team roster`, `teammate
+discovery`, and peer-name discovery. Re-run them before filing and retain
+candidate links.
 
 ## Proposed regression tests
 
@@ -227,3 +230,29 @@ peer messaging and includes one explicit
 - [ ] Confirm the proposed tool name against any implementation emerging from
   #9449.
 - [ ] Re-run duplicate search.
+
+<details>
+<summary>中文草稿（产品缺口尚未确认）</summary>
+
+## 希望添加什么？
+
+如果现有持久化 team configuration 不能从 teammate 上下文安全、可靠地读取，
+可以提供一个只读 roster/status 投影，返回 `send_message(to: name)` 接受的
+规范 member 名称和最小生命周期状态。
+
+## 为什么需要？
+
+peer-to-peer transport 已支持按名称发送，但 system prompt、`task_list` 和
+`list_agents` 不一定为 teammate 提供完整的当前地址簿。不过，仓库文档已经
+说明存在持久化 team configuration。提交前必须先验证 teammate 是否能够读取
+它，以及它是否就是预期的权威 roster。
+
+如果现有文件可用，这个请求应缩小为 discoverability 或 prompt guidance，
+而不能声称系统没有权威 roster。还需要确认与 #9449 的边界。
+
+## 附加信息
+
+任何投影都应只读，不暴露 prompts、消息内容、credentials、session IDs、
+绝对路径或隐藏推理，也不应唤醒、停止或重新分配 teammate。
+
+</details>

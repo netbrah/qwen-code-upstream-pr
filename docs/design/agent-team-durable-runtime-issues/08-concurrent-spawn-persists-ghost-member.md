@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: Deterministic shared-roster interleaving
+> Evidence: Source-supported shared-roster interleaving; not reproduced
+>
+> Readiness: Hold until controlled backend and persistence barriers demonstrate divergence
 
 ## Suggested title
 
@@ -57,9 +59,8 @@ pending. Reject B, then assert:
 - B is absent;
 - capacity and Agent View discovery do not count B.
 
-## Acceptance criteria
+## Invariant to verify
 
-- Spawn membership has explicit reservation, commit, and abort semantics.
 - Persistence includes only committed members.
 - Concurrent successful spawns remain supported.
 - A failed spawn cannot overwrite or erase another concurrent commit.
@@ -69,3 +70,25 @@ pending. Reject B, then assert:
 - [ ] Add controlled backend and write barriers.
 - [ ] Confirm whether a narrow serialized roster mutation is sufficient.
 - [ ] Search for ghost member and failed spawn duplicates.
+
+<details>
+<summary>中文草稿（尚未通过并发测试复现）</summary>
+
+## 发生了什么？
+
+源码中的并发 spawn 共享一个 member array。一个成功 spawn 可能持久化仍在
+pending 的另一个 member；如果后者随后失败，其内存回滚可能没有修复已写入
+的 roster。这个交错尚未通过受控测试执行。
+
+## 预期行为是什么？
+
+所有 spawn 完成后，磁盘 roster、内存 membership 和实际 backend handle
+应一致。失败的 spawn 不应留下可发现的 ghost member。
+
+## 提交门槛
+
+必须用 backend 与写入 barrier 固定执行顺序，并同时断言磁盘、内存、容量
+计算和 Agent View discovery。公开报告不规定 reservation/commit 的具体
+实现。
+
+</details>

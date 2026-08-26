@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: Deterministic source ordering; fake-backend test required
+> Evidence: Source-supported ordering risk; no lost result has been reproduced
+>
+> Readiness: Hold until a controlled pre-bridge event test fails
 
 ## Suggested title
 
@@ -74,3 +76,26 @@ in time.
 - [ ] Add the fake-backend regression test.
 - [ ] Confirm event names and line references on latest `main`.
 - [ ] Search for lost initial result and event bridge duplicates.
+
+<details>
+<summary>中文草稿（尚未复现结果丢失）</summary>
+
+## 发生了什么？
+
+静态检查显示，`spawnTeammate()` 在 `backend.spawnAgent()` 返回后才安装
+event bridge，而 in-process backend 的 `start()` 可能已开始初始 run。
+因此快速完成的初始结果可能在 bridge 安装前发出。当前还没有测试证明该结果
+实际丢失。
+
+## 预期行为是什么？
+
+每个成功完成且未取消的 teammate turn 都应向 leader 交付 final text，或
+交付明确的无可见答案通知，并且只能交付一次。
+
+## 提交门槛
+
+使用 fake backend 在 `spawnAgent()` resolve 前发出 `ROUND_TEXT` 和
+`IDLE`，随后检查 leader inbox；还要有一个 bridge 及时安装的对照，防止
+修复产生重复报告。
+
+</details>

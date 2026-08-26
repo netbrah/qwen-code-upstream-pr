@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: Confirmed by source; may be fixed with the routing bug
+> Evidence: Static source inspection; no user-visible mismatch captured
+>
+> Readiness: Do not file separately unless draft 1 is resolved and the visible mismatch remains
 
 ## Suggested title
 
@@ -81,3 +83,14 @@ teammates indistinguishable in the tab bar.
 Prefer including this as an acceptance criterion or companion PR test for the
 custom-model routing issue. File separately only if runtime routing is fixed
 but the UI and roster remain incorrect.
+
+<details>
+<summary>中文审阅说明</summary>
+
+静态检查发现，运行时选择的模型、持久化 member metadata，以及 Agent View
+注册字段之间可能存在差异。但目前没有捕获用户可见的错误输出，而且 UI
+字段也可能是有意显示 teammate 身份。此项不应作为独立 bug 提交；优先把它
+作为模型路由报告的验证条件。只有在路由修复后仍能复现错误显示，才考虑单独
+报告。
+
+</details>

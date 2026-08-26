@@ -1,12 +1,12 @@
-# Draft: backend-neutral Agent Team sessions and supervised workers
+# Internal proposal: backend-neutral Agent Team sessions and supervised workers
 
-> Filing status: Not filed
+> Filing status: Do not file as part of this issue packet
 >
 > Classification: Feature request / RFC
 >
 > Evidence: Architecture analysis and recurring concrete boundary failures
 >
-> Filing gate: Harden and file at least one concrete vertical bug first
+> Purpose: Preserve design context for later maintainer discussion
 
 ## Suggested title
 
@@ -106,3 +106,19 @@ Full design:
 - [ ] Add a contract-test sketch.
 - [ ] Decide whether to mention Prime Agent in the public version.
 - [ ] Re-run duplicate search and re-read the latest Fleet maintainer guidance.
+
+<details>
+<summary>中文内部摘要（不是公开 issue 草稿）</summary>
+
+该提案建议在 Agent View 与具体 `AgentInteractive` 对象之间引入
+backend-neutral session contract，并在保持 `TeamManager` 协调语义的前提下，
+将独立 worker process 作为可选 backend。ACP 可以作为连接异构 worker 的
+纵向协议，但不承担 team membership、task ownership、peer addressing 或
+delivery receipt 等横向协调语义。
+
+这是一份内部架构方向，不应作为当前 bug packet 的上游 issue 提交。它范围
+较大，重叠多个现有 issue，并且容易把窄缺陷讨论转变为预设 redesign。只有
+当维护者通过具体缺陷或小型 contract seam 明确邀请架构讨论时，才应重新整理
+为独立 RFC。
+
+</details>

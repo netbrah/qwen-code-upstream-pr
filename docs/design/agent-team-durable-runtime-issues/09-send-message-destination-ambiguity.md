@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: User-observed symptom plus deterministic source routing
+> Evidence: User-observed diagnostic plus static source inspection
+>
+> Readiness: Hold until the exact observed tool call establishes which destination fields were supplied
 
 ## Suggested title
 
@@ -154,9 +156,10 @@ being unable to send ordinary messages to the leader. This report concerns
 destination namespace ambiguity and silent branch precedence after teammate
 messaging is available.
 
-No open or closed issue matching `send_message teammate task_id`,
-`No background task found`, `Teammate not found`, or peer-message routing was
-found on 2026-08-25.
+Searches run on 2026-08-25 included `send_message teammate task_id`,
+`No background task found`, `Teammate not found`, and peer-message routing.
+Re-run them before filing; the current draft does not claim no duplicate
+exists.
 
 ## Proposed regression tests
 
@@ -199,3 +202,37 @@ queued to the wrong control plane.
   destination fields.
 - [ ] Add or link a minimal failing test branch if available.
 - [ ] Re-run duplicate search.
+
+<details>
+<summary>中文草稿（提交前需要确认原始 tool call）</summary>
+
+## 发生了什么？
+
+一次 Agent Team 会话中，向命名 teammate 发送消息时返回：
+
+```text
+Error: No background task found with ID "qa-reviewer".
+Task not found.
+```
+
+目前尚未保存原始 tool call，因此不能确定模型只提供了 `task_id`，还是同时
+提供了 `to` 和 `task_id`。源码检查表明，只要 `task_id` 为 truthy，执行
+路径会优先查询普通 background task，并可能忽略 `to`。这段分析不能替代
+对实际调用参数的确认。
+
+## 预期行为是什么？
+
+同时提供 `to` 和 `task_id` 的调用应被拒绝，而不是静默忽略一个 destination。
+如果未知 `task_id` 恰好是 active teammate 的规范名称，错误信息可以指出
+namespace 不匹配；这一诊断增强应与“两个字段同时出现”的验证缺陷分开评估。
+
+## 客户端信息
+
+提交前添加完整 `/about` 输出、平台、安装方式和精确 commit。
+
+## 还需要知道什么？
+
+不得建议恢复 top-level JSON Schema `oneOf`，因为 #7984 已记录相关 provider
+兼容性问题。公开报告必须附上经过脱敏的原始 tool call 和返回值。
+
+</details>

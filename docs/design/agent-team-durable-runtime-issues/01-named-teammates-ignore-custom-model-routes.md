@@ -4,7 +4,9 @@
 >
 > Classification: Bug
 >
-> Evidence: User-observed behavior plus source-supported root-cause hypothesis
+> Evidence: User-observed behavior; source analysis is a possible cause only
+>
+> Readiness: Hold until the exact environment and a sanitized routing trace are attached
 
 ## Suggested title
 
@@ -143,9 +145,9 @@ agent model frontmatter and model-provider routing as supported behavior for
 ordinary subagents. This report uses that supported configuration and shows a
 specific divergence when the same agent definition becomes a named teammate.
 
-No open or closed issue with this Agent Team-specific model-routing behavior
-was found in searches for `agent team custom model`, `teammate model`, or
-`agent definition model` on 2026-08-25.
+Searches run on 2026-08-25 included `agent team custom model`, `teammate
+model`, and `agent definition model`. Re-run them immediately before filing;
+the current draft does not claim that no duplicate exists.
 
 ## Proposed regression test
 
@@ -190,3 +192,37 @@ same effective route.
 - [ ] Reproduce with an explicit `authType:model-id` selector.
 - [ ] Add or link a minimal failing test branch if available.
 - [ ] Re-run duplicate search.
+
+<details>
+<summary>中文草稿（提交前必须补齐环境与路由证据）</summary>
+
+## 发生了什么？
+
+一个位于 `.qwen/agents/` 的自定义 agent 定义通过 `settings.json` 选择了
+特定模型。同一定义作为普通 subagent 启动时，会使用所选路由；作为 Agent
+Team 中的命名 teammate 启动时，观察到的请求却使用了 leader 的路由。
+
+目前这是用户观察到的差异。源码检查发现了一个可能的原因：Agent Team
+启动路径可能保留模型 ID，却没有构造普通 subagent 路径使用的
+`RuntimeContentGeneratorView`。在获得路由日志或失败测试之前，不应把这段
+源码分析表述为已确认根因。
+
+## 预期行为是什么？
+
+同一个自定义 agent 定义无论作为普通 subagent 还是命名 teammate 启动，都
+应解析到相同的模型、认证类型和 provider 路由。加入 Agent Team 只应改变
+协调方式，不应改变模型路由语义。
+
+## 客户端信息
+
+提交前粘贴完整的 `/about` 输出、平台、安装方式、Node.js 版本，以及经过
+脱敏的 provider/model 配置。不得包含密钥、token、私有 base URL 或专有
+模型名称。
+
+## 还需要知道什么？
+
+公开报告应包含一个普通 subagent 成功路由的对照，以及一个命名 teammate
+使用错误路由的 provider 侧或本地假服务器日志。还应说明显式
+`authType:model-id` 选择器是否出现同样行为。
+
+</details>
