@@ -2,7 +2,7 @@
 
 > Status: Internal drafts only. No issue in this directory has been filed.
 >
-> Last reviewed: 2026-08-25
+> Last reviewed: 2026-08-26
 >
 > Inspected source baseline: `a6d30ebc6`
 >
@@ -59,6 +59,7 @@ Source inspection is labeled separately:
 | 10 | [Teammate-addressable roster](10-teammate-addressable-roster.md) | Product gap is not yet established | Reframe only after verifying the documented persisted team configuration is insufficient |
 | 11 | [Queued Agent View message disappears after tab switch](11-agent-view-queued-message-lost-on-tab-switch.md) | User-observed; lifecycle path identified in source | Candidate after `/about`, exact steps, and screenshot or recording |
 | 12 | [Backend-neutral Agent Team sessions](12-backend-neutral-team-sessions.md) | Internal architecture proposal | Keep internal; do not file as a packet issue |
+| 13 | [ACP-backed delegated agent sessions](13-acp-delegated-agent-sessions.md) | Feature request based on existing ACP bridge capabilities | Ready after the design URL is published; file separately and link #10078 and #8775 |
 
 ## Sequencing
 
