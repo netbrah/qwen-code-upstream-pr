@@ -23,13 +23,20 @@ direction transparent.
 | 6 | [Stale reclaim can delete a newly created live team](06-stale-reclaim-deletes-new-generation.md) | Bug | Deterministic cross-session race | Add generation-controlled integration test |
 | 7 | [Initial teammate result can be lost during spawn](07-initial-teammate-result-lost-before-event-bridge.md) | Bug | Deterministic source ordering | Add pre-bridge event replay test |
 | 8 | [Concurrent failed spawn can persist a ghost member](08-concurrent-spawn-persists-ghost-member.md) | Bug | Deterministic source interleaving | Add controlled backend/write barriers |
-| 9 | [Backend-neutral Agent Team sessions and supervised workers](09-backend-neutral-team-sessions.md) | Feature request / RFC | Design complete; scope needs maintainer calibration | File only after one or two accepted vertical bug fixes |
+| 9 | [`send_message` misroutes ambiguous teammate destinations](09-send-message-destination-ambiguity.md) | Bug | User-observed symptom; deterministic source routing | Capture one sanitized failing tool call and add focused invocation tests |
+| 10 | [Expose an addressable Agent Team roster to teammates](10-teammate-addressable-roster.md) | Feature request | Source-confirmed discovery gap | Validate desired relationship to #9449 before filing |
+| 11 | [Backend-neutral Agent Team sessions and supervised workers](11-backend-neutral-team-sessions.md) | Feature request / RFC | Design complete; scope needs maintainer calibration | File only after one or two accepted vertical bug fixes |
 
 The queued-message delay is not drafted as a new issue because
 [#8172](https://github.com/QwenLM/qwen-code/issues/8172) already tracks it.
 Leader-visible terminal health is already covered by
 [#9449](https://github.com/QwenLM/qwen-code/issues/9449). The umbrella draft
 should link those issues rather than compete with them.
+
+The teammate-roster draft is related to #9449 but does not duplicate its
+current leader-health scope. It asks for canonical peer addressing from a
+teammate context. Before filing, decide whether maintainers prefer a separate
+discovery issue or a narrowly scoped extension of #9449.
 
 PID-only stale ownership is also not drafted as a bug. Current source comments
 and tests deliberately treat ambiguous ownership conservatively, so PID reuse
@@ -73,7 +80,10 @@ invariant violation.
 - File one issue at a time.
 - Start with either the custom-model routing bug or concurrent task
   double-dispatch. The first has direct user evidence; the second has the
-  smallest deterministic concurrency invariant.
+  smallest deterministic concurrency invariant. The `send_message` routing
+  bug is also a strong early candidate once a sanitized failing tool call is
+  captured because its misleading `Task not found` result is user-visible and
+  its branch precedence is deterministic.
 - Give the Qwen triage bot and maintainers time to classify the first report
   before filing adjacent issues.
 - Do not file the umbrella RFC until the concrete reports establish the

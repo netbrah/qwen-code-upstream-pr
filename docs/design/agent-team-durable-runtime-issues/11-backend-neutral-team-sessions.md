@@ -6,7 +6,7 @@
 >
 > Evidence: Architecture analysis and recurring concrete boundary failures
 >
-> Filing gate: Harden and file at least one concrete bug first
+> Filing gate: Harden and file at least one concrete vertical bug first
 
 ## Suggested title
 
